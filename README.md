@@ -6,6 +6,11 @@ AI 的答案会自动沉淀进题库，下次同类题直接走缓存。
 
 自带完整 WebGUI：AI 配置 / 提示词 / 题库管理 / 用户管理 / 日志统计 / 在线测试 / 一键导出接入配置。
 
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Tests](https://img.shields.io/badge/tests-170%20checks-brightgreen)](./scripts/verify.ts)
+
 ```
 OCS 脚本 ──POST /search──▶ 后端 ──▶ 题库命中？ ──是──▶ 直接返回（cache/fuzzy 标签）
                                     └─否──▶ LLM ──▶ 入库 ──▶ 返回（ai 标签）
@@ -235,3 +240,11 @@ HTTP 鉴权、登录会话、统计、接入向导、题库接口。
 详细开发约定、验证要求与安全红线见 [AGENTS.md](./AGENTS.md)。
 
 **本项目使用 git 管理，每次更改后必须立即提交**（提交信息遵循 Conventional Commits，`type(scope): 简述`）。
+
+---
+
+## 十、许可证
+
+[MIT](./LICENSE) © 2025 awes1000
+
+> 本项目仅供学习与技术研究使用。请遵守所在平台的服务条款与学术诚信要求，使用者自行承担使用风险。

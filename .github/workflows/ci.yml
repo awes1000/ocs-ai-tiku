@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 类型检查 + 回归测试（Node ${{ matrix.node }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci || npm install
+
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+
+      - name: 冒烟测试（mock LLM）
+        run: npm run smoke
+
+      - name: 前端静态检查
+        run: npm run test:ui
+
+      - name: 后端端到端测试
+        env:
+          PORT: 8061
+          DB_PATH: data/ci.db
+          ADMIN_USERNAME: admin
+          ADMIN_PASSWORD: ci-test-pass
+          HOST: 127.0.0.1
+        run: |
+          npx tsx src/index.ts &
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:8061/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8061/health
+          BASE=http://127.0.0.1:8061 ADMIN_PASSWORD=ci-test-pass npm run test:e2e
