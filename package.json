@@ -1,0 +1,35 @@
+{
+  "name": "ocs-tiku",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OCS AI 题库后端 — AI 自动答题 + 本地题库缓存 + WebGUI 管理面板",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "test:e2e": "tsx scripts/e2e.ts",
+    "test:ui": "tsx scripts/ui-check.ts",
+    "test:browser": "tsx scripts/ui-browser.ts",
+    "verify": "tsx scripts/verify.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "string-similarity": "^4.0.4",
+    "undici": "^8.12.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/string-similarity": "^4.0.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

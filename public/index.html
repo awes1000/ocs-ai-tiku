@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OCS AI 题库 · 控制台</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- 登录页 -->
+    <div id="login-view" class="login-wrap hidden">
+      <form class="login-card" id="login-form" autocomplete="on">
+        <div class="login-logo">📚</div>
+        <h1>OCS AI 题库</h1>
+        <p class="muted">AI 自动答题 · 本地题库缓存 · 一键接入</p>
+        <label>
+          <span>用户名</span>
+          <input name="username" id="login-username" autocomplete="username" required />
+        </label>
+        <label>
+          <span>密码</span>
+          <input name="password" id="login-password" type="password" autocomplete="current-password" required />
+        </label>
+        <button class="btn primary block" type="submit" id="login-btn">登录</button>
+        <div class="alert error hidden" id="login-error"></div>
+      </form>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="app-view" class="layout hidden">
+      <aside class="sidebar">
+        <div class="brand"><span>📚</span><b>OCS 题库</b></div>
+        <nav id="nav">
+          <a data-page="dashboard" class="nav-item active"><i>📈</i><span>总览</span></a>
+          <a data-page="providers" class="nav-item"><i>🤖</i><span>AI 配置</span></a>
+          <a data-page="prompts" class="nav-item"><i>📝</i><span>提示词</span></a>
+          <a data-page="questions" class="nav-item"><i>🗂️</i><span>题库管理</span></a>
+          <a data-page="logs" class="nav-item"><i>🧾</i><span>调用日志</span></a>
+          <a data-page="wizard" class="nav-item"><i>🔌</i><span>接入向导</span></a>
+          <a data-page="playground" class="nav-item"><i>🧪</i><span>在线测试</span></a>
+          <a data-page="users" class="nav-item admin-only"><i>👥</i><span>用户管理</span></a>
+          <a data-page="settings" class="nav-item admin-only"><i>⚙️</i><span>系统设置</span></a>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="user-chip">
+            <span class="avatar" id="user-avatar">A</span>
+            <div>
+              <div id="user-name">-</div>
+              <div class="muted small" id="user-role">-</div>
+            </div>
+          </div>
+          <button class="btn ghost block small" id="logout-btn">退出登录</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <h2 id="page-title">总览</h2>
+          <div class="topbar-right">
+            <span class="badge" id="ai-status">AI 状态</span>
+            <button class="btn ghost small" id="refresh-btn">刷新</button>
+          </div>
+        </header>
+        <div class="content" id="content"></div>
+      </main>
+    </div>
+
+    <!-- 模态框 -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3 id="modal-title">标题</h3>
+          <button class="icon-btn" id="modal-close">✕</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-foot" id="modal-foot"></div>
+      </div>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
+
+    <!-- 首次登录改密提示 -->
+    <div id="force-password" class="modal hidden">
+      <div class="modal-card narrow">
+        <div class="modal-head"><h3>请修改初始密码</h3></div>
+        <div class="modal-body">
+          <p class="muted">为了账号安全，请先设置新密码（至少 6 位）。</p>
+          <label class="field"><span>原密码</span><input id="fp-old" type="password" /></label>
+          <label class="field"><span>新密码</span><input id="fp-new" type="password" /></label>
+          <label class="field"><span>确认新密码</span><input id="fp-new2" type="password" /></label>
+          <div class="alert error hidden" id="fp-error"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn primary" id="fp-submit">保存并继续</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
