@@ -46,7 +46,7 @@ jobs:
         run: |
           npx tsx src/index.ts &
           for i in $(seq 1 40); do
-            if curl -sf http://127.0.0.1:8061/health > /dev/null; then break; fi
+            if curl -sf http://127.0.0.1:8061/health > /dev/null; then echo "server ready"; break; fi
             sleep 1
           done
           curl -sf http://127.0.0.1:8061/health
