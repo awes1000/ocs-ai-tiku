@@ -21,7 +21,7 @@ OCS 脚本 ──POST /search──▶ 后端 ──▶ 题库命中？ ──�
 ## 快速开始
 
 ```bash
-# 1. 安装依赖（Node.js ≥ 18）
+# 1. 安装依赖（Node.js ≥ 20.18）
 npm install
 
 # 2. 配置（可选，也可先启动再在 WebGUI 里配）

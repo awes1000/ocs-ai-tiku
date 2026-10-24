@@ -82,6 +82,8 @@ scripts/                  测试脚本
 
 - **TypeScript**：`strict` 开启，禁止随手 `any`（外部响应可 `any` 但需就近收窄）。
 - **不要引入构建步骤**：前端保持原生 JS，单文件 `app.js`。
+- **Node 版本**：最低 20.18（`undici@7` / `better-sqlite3@12` 的 engines 约束），CI 跑 20/22/24。
+- **新增测试脚本**：统一在 `scripts/test-env.ts` 里取临时 DB/端口/管理员密码，不要在脚本里写固定密码。
 - **答案格式不能随意改**：`results` 的文本/字母双条、多选 `#` 连接、判断 `对/错`、
   填空 `#` 连接，都必须与 OCS 的匹配逻辑保持一致（见 README「答案格式」）。
 - **新增题目字段**：在 `src/db.ts` 的 `migrate()` 里用 `addColumnIfMissing` 补列，不要直接改 `CREATE TABLE` 后假设旧库会更新。
