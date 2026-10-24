@@ -237,9 +237,57 @@ HTTP 鉴权、登录会话、统计、接入向导、题库接口。
 
 ## 九、开发与协作
 
-详细开发约定、验证要求与安全红线见 [AGENTS.md](./AGENTS.md)。
+### 提交规范
 
-**本项目使用 git 管理，每次更改后必须立即提交**（提交信息遵循 Conventional Commits，`type(scope): 简述`）。
+本项目使用 git 管理，**每次更改后都要提交**（一次内聚改动 = 一次提交），提交信息遵循 Conventional Commits：
+
+```
+<type>(<scope>): <简述>
+```
+
+| type | 用途 |
+|---|---|
+| `feat` | 新功能 |
+| `fix` | 修 bug |
+| `refactor` | 重构（不改行为） |
+| `perf` | 性能优化 |
+| `docs` | 文档 |
+| `test` | 测试脚本 |
+| `chore` | 依赖、构建、配置 |
+| `style` | 格式、样式（无逻辑改动） |
+
+示例：`feat(search): 支持 completion 题型多空答案`、`fix(resolver): 修复选项乱序后字母未重排`。
+
+提交前请保证能跑通：`npm run typecheck`，涉及逻辑或前端改动时再跑 `npm run verify`。
+**不要把** `.env`、`data/`（数据库与截图）、`node_modules/`、`dist/` 以及任何密钥提交进仓库。
+
+### 代码约定
+
+- **Node 版本**：≥ 20.18（`undici@7` / `better-sqlite3@12` 的 engines 约束），CI 跑 20 / 22 / 24。
+- **不加构建步骤**：前端保持原生 JS，单文件 `public/app.js`。
+- **答案格式不能随意改**：文本 + 字母双条、多选 `#` 连接、判断 `对/错`、填空 `#` 连接，
+  必须与 OCS 的匹配逻辑保持一致（见上文「答案格式」）。
+- **新增题目字段**：在 `src/db.ts` 的 `migrate()` 用 `addColumnIfMissing` 补列，不要只改 `CREATE TABLE` 就假设旧库会更新。
+- **新增设置项**：加到 `src/config.ts` 的 `DEFAULTS`，并在 WebGUI 设置页暴露。
+- **新增 API**：同时更新 `public/app.js` 调用方与 `scripts/ui-check.ts` 的 `backendRoutes` 清单。
+- **新增测试脚本**：从 `scripts/test-env.ts` 取临时数据库/端口/管理员密码，不要在脚本里写死密码。
+
+### 改动类型与必跑测试
+
+| 改动类型 | 建议运行 |
+|---|---|
+| 纯 TS 类型 / 小改 | `npm run typecheck` |
+| 后端逻辑 / 数据库 / 接口 | `npm run typecheck` + `npm run smoke` |
+| 前端页面 / 交互 | `npm run test:ui` + `npm run test:browser` |
+| 发版前 / 大功能 | `npm run verify` |
+
+测试脚本使用临时数据库与 mock LLM，**不会消耗真实 token**，`verify` 结束会自动清理临时文件。
+
+### 安全
+
+- 密码使用 scrypt 加盐哈希；会话 token 在 DB 里只存 SHA-256。
+- 列表 / 日志 / 备份接口中的 API Key 一律脱敏。
+- 搜题 token 泄露请走「重置 Token」流程，并同步更新脚本配置。
 
 ---
 
