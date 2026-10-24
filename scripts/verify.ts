@@ -13,8 +13,17 @@ const DB = path.join(ROOT, 'data', 'verify.db');
 const NODE = process.execPath;
 const TSX = path.join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
+/** 清理临时数据库（含 WAL/SHM） */
+function rmSqlite(base: string): void {
+  for (const suffix of ['', '-wal', '-shm']) {
+    const f = base + suffix;
+    if (fs.existsSync(f)) fs.rmSync(f, { force: true });
+  }
+}
+
 const summary: { name: string; ok: boolean; out?: string }[] = [];
 const PROFILE = path.join(ROOT, 'data', 'shot', 'profile');
+const SMOKE_DB = path.join(ROOT, 'data', 'verify-smoke.db');
 
 function rmDir(dir: string): void {
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
@@ -52,19 +61,13 @@ function waitServer(url: string, timeoutMs = 30000): Promise<boolean> {
 }
 
 async function main() {
-  // 清理旧 DB 与浏览器配置
-  for (const suffix of ['', '-wal', '-shm']) {
-    const f = DB + suffix;
-    if (fs.existsSync(f)) fs.rmSync(f);
-  }
+  // 清理旧数据库与浏览器配置
+  rmSqlite(DB);
+  rmSqlite(SMOKE_DB);
   rmDir(PROFILE);
 
   // 1. smoke（自带 mock LLM，使用独立 DB）
-  const smoke = await run('scripts/smoke.ts', {
-    DB_PATH: path.join(ROOT, 'data', 'verify-smoke.db'),
-    PORT: '8098',
-    ADMIN_PASSWORD: 'smoke-pass',
-  });
+  const smoke = await run('scripts/smoke.ts', { DB_PATH: SMOKE_DB, PORT: '8098' });
   const smokeLine = smoke.out.match(/共 \d+ 项，通过 \d+ 项[^\n]*/)?.[0] || '';
   summary.push({ name: '冒烟测试（35 项断言 + mock LLM）', ok: smoke.code === 0, out: smokeLine });
 
@@ -105,14 +108,17 @@ async function main() {
     const uiLine = ui.out.match(/共 \d+ 项，通过 \d+ 项[^\n]*/)?.[0] || '';
     summary.push({ name: '前端静态检查', ok: ui.code === 0, out: uiLine });
 
-    // 5. 浏览器渲染（Chrome 无头）
+    // 5. 浏览器渲染（无头 Chrome/Edge）
     const chromePaths = [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
     ];
-    const chrome = chromePaths.find((p) => fs.existsSync(p));
+    const chrome = process.env.CHROME_PATH || chromePaths.find((p) => fs.existsSync(p));
     if (chrome) {
       const br = await run('scripts/ui-browser.ts', {
         BASE: `http://127.0.0.1:${PORT}`,
@@ -128,14 +134,8 @@ async function main() {
   } finally {
     server?.kill();
     await new Promise((r) => setTimeout(r, 500));
-    for (const suffix of ['', '-wal', '-shm']) {
-      const f = DB + suffix;
-      if (fs.existsSync(f)) fs.rmSync(f, { force: true });
-    }
-    const smokeDb = path.join(ROOT, 'data', 'verify-smoke.db');
-    for (const suffix of ['', '-wal', '-shm']) {
-      if (fs.existsSync(smokeDb + suffix)) fs.rmSync(smokeDb + suffix, { force: true });
-    }
+    rmSqlite(DB);
+    rmSqlite(SMOKE_DB);
     rmDir(PROFILE);
   }
 

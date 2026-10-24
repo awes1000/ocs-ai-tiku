@@ -1,14 +1,11 @@
 /**
- * 冒烟测试脚本：node --import tsx scripts/smoke.ts
- * 覆盖：归一化、答案映射、LLM 解析、resolver 流水线（mock LLM 提供商）。
+ * 冒烟测试脚本：npm run smoke
+ * 覆盖：归一化、答案映射、LLM 解析、resolver 流水线（mock LLM 提供商）、HTTP 鉴权。
+ * 环境变量必须最先加载：test-env 会为本进程设置独立临时数据库与管理员密码。
  */
+import { TEST_ADMIN_PASSWORD } from './test-env';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-
-process.env.DB_PATH = process.env.DB_PATH || 'data/smoke.db';
-process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-process.env.PORT = process.env.PORT || '8099';
-process.env.ALLOW_ANONYMOUS = process.env.ALLOW_ANONYMOUS || 'false';
 
 /* ---------------- 1. 纯函数单测 ---------------- */
 import {
@@ -131,12 +128,22 @@ async function main(): Promise<void> {
   check('直接调用 resolver 不写请求日志', (db.prepare('SELECT COUNT(*) c FROM requests').get() as any).c === 0);
 
   /* ---------------- 3. HTTP 端到端 ---------------- */
-  const { app, start } = await import('../src/index');
-  void app;
-  start();
-  await new Promise((r) => setTimeout(r, 500));
+  const { start } = await import('../src/index');
+  const server = start();
+  // 等待 listen 完成（回调触发后 address() 才可用）
+  await new Promise<void>((resolve) => (server.listening ? resolve() : server.on('listening', () => resolve())));
 
-  const base = `http://127.0.0.1:${process.env.PORT}`;
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  // 等待监听就绪（不依赖固定 sleep，避免 CI 上过早请求）
+  for (let i = 0; i < 100; i++) {
+    try {
+      const r = await fetch(`${base}/health`);
+      if (r.ok) break;
+    } catch {
+      /* 再等一会 */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
   const token = (db.prepare(`SELECT token FROM users WHERE role='admin'`).get() as any).token;
 
   const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
@@ -160,7 +167,7 @@ async function main(): Promise<void> {
   check('POST /search 无 token → 401', noToken.status === 401);
   check('接口请求写入日志', (db.prepare('SELECT COUNT(*) c FROM requests').get() as any).c >= 1);
 
-  const login = await post('/api/auth/login', { username: 'admin', password: process.env.ADMIN_PASSWORD });
+  const login = await post('/api/auth/login', { username: 'admin', password: TEST_ADMIN_PASSWORD });
   check('登录成功', login.json.code === 1, JSON.stringify(login.json));
   const cookie = (login.headers.get('set-cookie') || '').split(';')[0];
 
@@ -189,6 +196,7 @@ async function main(): Promise<void> {
   }
   console.log(`\n共 ${results.length} 项，通过 ${results.length - failed} 项${failed ? `，失败 ${failed} 项` : ''}\n`);
   llmServer.close();
+  server.close();
   process.exit(failed ? 1 : 0);
 }
 

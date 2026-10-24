@@ -1,12 +1,15 @@
 /**
- * WebGUI 端到端流程测试：需先启动服务（PORT=8061, ADMIN_PASSWORD=admin123）
- * 会驱动所有管理接口 + mock LLM，验证前端用到的每个接口。
+ * WebGUI 端到端流程测试：需先启动服务。
+ * 用法：先 npm start（或用 verify.ts 自动拉起实例），再
+ *   BASE=http://127.0.0.1:8060 ADMIN_PASSWORD=<管理员密码> npm run test:e2e
+ * 覆盖：登录/改密/登出、提供商增删改测、设置、提示词、用户 CRUD、
+ *      题库 CRUD/导入导出、日志统计、接入向导、测试台。
  */
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-const BASE = process.env.BASE || 'http://127.0.0.1:8061';
-const PASS = process.env.ADMIN_PASSWORD || 'admin123';
+const BASE = process.env.BASE || 'http://127.0.0.1:8099';
+const PASS = process.env.ADMIN_PASSWORD || 'test-admin-pass';
 
 const results: { name: string; ok: boolean; detail?: string }[] = [];
 const check = (name: string, ok: boolean, detail = '') => results.push({ name, ok, detail });
@@ -203,7 +206,8 @@ async function main() {
       const r1 = fn({ code: 1, data: { results: [['q', 'a']] } });
       const r2 = fn({ code: 0, msg: '未找到' });
       return Array.isArray(r1) && r1.length === 1 && r2[0] === '未找到' && r2[1] === undefined;
-    } catch {
+    } catch (e) {
+      check('向导 handler 可用', false, String(e));
       return false;
     }
   })());

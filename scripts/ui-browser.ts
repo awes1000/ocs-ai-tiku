@@ -6,13 +6,26 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const BASE = process.env.BASE || 'http://127.0.0.1:8061';
+const BASE = process.env.BASE || 'http://127.0.0.1:8060';
 const USER = process.env.ADMIN_USERNAME || 'admin';
-const PASS = process.env.ADMIN_PASSWORD || 'admin123';
+const PASS = process.env.ADMIN_PASSWORD || 'test-admin-pass';
 const OUT_DIR = path.resolve(__dirname, '..', 'data', 'shot');
-const CHROME =
-  process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const CHROME = process.env.CHROME_PATH || defaultChromePath();
 const PORT = 9333;
+
+/** 按平台挑选默认浏览器路径（可用 CHROME_PATH 覆盖） */
+function defaultChromePath(): string {
+  const candidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || candidates[0];
+}
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 

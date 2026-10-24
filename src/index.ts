@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import type { Server } from 'node:http';
 import { env } from './env';
 import { ensureAdmin, getDb } from './db';
 import searchRouter from './routes/search';
@@ -70,16 +71,17 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   res.status(status).json({ code: 0, msg: errMsg(err) });
 });
 
-function start(): void {
+function start(): Server {
   getDb();
   ensureAdmin(getDb());
-  app.listen(env.PORT, env.HOST, () => {
+  const server = app.listen(env.PORT, env.HOST, () => {
     console.log(`\nOCS AI 题库后端已启动`);
     console.log(`  监听地址 : http://${env.HOST}:${env.PORT}`);
     console.log(`  搜题接口 : GET|POST /search`);
     console.log(`  管理面板 : http://127.0.0.1:${env.PORT}/`);
     console.log(`  数据库   : ${env.DB_PATH}\n`);
   });
+  return server;
 }
 
 if (require.main === module) start();
