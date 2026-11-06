@@ -14,6 +14,7 @@ const state = {
   templates: {},
   defaultsTemplates: {},
   stats: null,
+  aiConfigured: false,
 };
 
 function esc(s) {
@@ -121,6 +122,20 @@ function copyText(text) {
   return Promise.resolve();
 }
 
+/** 账号 + 接入信息的分发文本（管理员一键复制给用户） */
+function distributionText(user, password) {
+  const origin = window.location.origin;
+  return [
+    '【OCS AI 题库】账号分发',
+    `登录地址：${origin}`,
+    `用户名：${user.username}`,
+    ...(password ? [`初始密码：${password}`] : []),
+    `搜题 Token：${user.token}`,
+    '',
+    '登录后进入「接入向导」页：复制 OCS 题库配置 → 粘贴到 OCS 的「通用 → 题库配置」保存即可。',
+  ].join('\n');
+}
+
 /* ============================ 登录 ============================ */
 
 function showLogin() {
@@ -134,17 +149,20 @@ function showApp() {
   $('#login-view').classList.add('hidden');
   $('#app-view').classList.remove('hidden');
   const u = state.user;
+  const isAdmin = u.role === 'admin';
   $('#user-name').textContent = u.username;
-  $('#user-role').textContent = u.role === 'admin' ? '管理员' : '普通用户';
+  $('#user-role').textContent = isAdmin ? '管理员' : '普通用户';
   $('#user-avatar').textContent = u.username.slice(0, 1).toUpperCase();
-  $$('.admin-only').forEach((el) => el.classList.toggle('hidden', u.role !== 'admin'));
+  $$('.admin-only').forEach((el) => el.classList.toggle('hidden', !isAdmin));
+  // 普通用户只有「接入向导」一个入口
+  if (!isAdmin) state.page = 'wizard';
   if (u.must_change_password) {
     $('#force-password').classList.remove('hidden');
     $('#fp-old').value = '';
     $('#fp-new').value = '';
     $('#fp-new2').value = '';
   }
-  navigate(state.page || 'dashboard');
+  navigate(state.page || (isAdmin ? 'dashboard' : 'wizard'));
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
@@ -162,6 +180,7 @@ $('#login-form').addEventListener('submit', async (e) => {
     state.user = data.user;
     $('#login-password').value = '';
     showApp();
+    await refreshMe();
     await loadCommon();
   } catch (err) {
     errBox.textContent = err.message;
@@ -222,8 +241,21 @@ const PAGES = {
   settings: { title: '系统设置', render: renderSettings },
 };
 
+/** 拉取当前账号信息（含 API 状态），普通用户登录后也会调用 */
+async function refreshMe() {
+  try {
+    const data = await api('/auth/me');
+    state.user = data.user;
+    state.aiConfigured = Boolean(data.ai_configured);
+  } catch {
+    /* 忽略 */
+  }
+}
+
 function navigate(page) {
-  if (!PAGES[page]) page = 'dashboard';
+  if (!PAGES[page]) page = state.user?.role === 'admin' ? 'dashboard' : 'wizard';
+  // 普通用户只能访问接入向导
+  if (state.user?.role !== 'admin' && page !== 'wizard') page = 'wizard';
   state.page = page;
   $$('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   $('#page-title').textContent = PAGES[page].title;
@@ -246,10 +278,15 @@ $('#refresh-btn').addEventListener('click', () => navigate(state.page));
 async function loadCommon() {
   try {
     const isAdmin = state.user?.role === 'admin';
+    if (!isAdmin) {
+      // 普通用户不拉取管理类数据，仅根据 /auth/me 的 ai_configured 展示 API 状态
+      setAiBadge(state.aiConfigured);
+      return;
+    }
     const [stats, settingsData, providers] = await Promise.all([
       api('/stats'),
       api('/settings'),
-      isAdmin ? api('/providers') : Promise.resolve({ providers: [] }),
+      api('/providers'),
     ]);
     state.stats = stats;
     state.settings = settingsData.settings;
@@ -257,12 +294,22 @@ async function loadCommon() {
     state.defaultsTemplates = settingsData.defaults_templates;
     state.answerShapes = settingsData.answer_shapes;
     state.providers = providers.providers;
-    const badge = $('#ai-status');
-    badge.textContent = stats.ai_configured ? `AI 已就绪 · ${stats.totals.questions} 题` : '未配置 AI';
-    badge.className = `badge ${stats.ai_configured ? 'ok' : 'err'}`;
+    state.aiConfigured = stats.ai_configured;
+    setAiBadge(stats.ai_configured, stats.totals?.questions);
   } catch (err) {
     console.warn('加载公共数据失败', err);
   }
+}
+
+/** 顶栏 API 状态里标 */
+function setAiBadge(configured, questionCount) {
+  const badge = $('#ai-status');
+  badge.textContent = configured
+    ? questionCount === undefined
+      ? 'API 正常'
+      : `AI 已就绪 · ${questionCount} 题`
+    : '未配置 AI';
+  badge.className = `badge ${configured ? 'ok' : 'err'}`;
 }
 
 /* ============================ 总览 ============================ */
@@ -1057,9 +1104,37 @@ async function renderLogs() {
 
 /* ============================ 接入向导 ============================ */
 
+/** 使用步骤（管理员与普通用户共用） */
+function wizardStepsHtml(isAdmin) {
+  return `
+    <ol style="line-height:2;font-size:13px;padding-left:20px;margin:0">
+      <li>打开 OCS 网课助手 →「通用」→「题库配置」，把上面的 JSON <b>整段</b>粘贴进去保存（必须是数组 <code>[{...}]</code>，否则会提示「解析失败：Spread syntax requires ...iterable[Symbol.iterator] to be a function」）。</li>
+      <li>若使用全域名通用版脚本，无需修改 <code>@connect</code>；否则需要在脚本头部加上：
+        <div class="code-block" id="wz-connect" style="margin-top:6px">// @connect *</div>
+      </li>
+      <li>在脚本设置里把「题库请求超时」调到 <b>60 秒以上</b>（AI 答题较慢）。</li>
+      ${isAdmin ? '<li>在「在线测试」页先用同样的题目验证一次，确认返回格式正确。</li>' : ''}
+      <li>答题面板中，AI 生成的答案会显示 <b>AI</b> 蓝色标签，命中题库缓存会显示 <b>题库缓存</b> 标签。</li>
+    </ol>`;
+}
+
+/** 自定义「JSON 数组」说明（管理员可见服务地址编辑提示） */
+function wizardNoteHtml(isAdmin) {
+  return `
+    <div class="alert info small">
+      ${isAdmin ? '若 OCS 脚本与后端不在同一台机器的域名下，请把「服务地址」改成脚本能访问到的地址（局域网 IP、公网域名等）。' : '服务地址由管理员统一配置，如需修改请联系管理员。'}
+      使用 <code>GM_xmlhttpRequest</code> 可无视 CORS 与混合内容限制。
+      生成的配置是 <b>JSON 数组</b>（OCS 题库配置只接受 <code>[{...}]</code>），整段粘贴即可。
+      已包含 <code>images</code> / <code>suggestion_title</code> / <code>suggestion_options</code>，
+      支持 OCS 的「图片题优化」（图片以多模态 part 发给模型）。
+    </div>`;
+}
+
 async function renderWizard() {
   const isAdmin = state.user.role === 'admin';
-  const usersData = isAdmin ? await api('/users') : { users: [state.user] };
+  if (!isAdmin) return renderUserPanel();
+
+  const usersData = await api('/users');
   const baseGuess = window.location.origin;
 
   $('#content').innerHTML = `
@@ -1078,13 +1153,7 @@ async function renderWizard() {
           <input id="wz-base" value="${esc(state.settings.public_base_url || baseGuess)}" />
         </label>
       </div>
-      <div class="alert info small">
-        若 OCS 脚本与后端不在同一台机器的域名下，请把「服务地址」改成脚本能访问到的地址（局域网 IP、公网域名等）。
-        使用 <code>GM_xmlhttpRequest</code> 可无视 CORS 与混合内容限制。
-        生成的配置是 <b>JSON 数组</b>（OCS 题库配置只接受 <code>[{...}]</code>），整段粘贴即可。
-        已包含 <code>images</code> / <code>suggestion_title</code> / <code>suggestion_options</code>，
-        支持 OCS 的「图片题优化」（图片以多模态 part 发给模型）。
-      </div>
+      ${wizardNoteHtml(true)}
       <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary" id="wz-gen">生成配置</button>
         <button class="btn" id="wz-copy">复制 JSON</button>
@@ -1097,15 +1166,7 @@ async function renderWizard() {
     </div>
     <div class="card">
       <div class="card-head"><h3>使用步骤</h3></div>
-      <ol style="line-height:2;font-size:13px;padding-left:20px;margin:0">
-        <li>打开 OCS 网课助手 →「通用」→「题库配置」，把上面的 JSON <b>整段</b>粘贴进去保存（必须是数组 <code>[{...}]</code>，否则会提示「解析失败：Spread syntax requires ...iterable[Symbol.iterator] to be a function」）。</li>
-        <li>若使用全域名通用版脚本，无需修改 <code>@connect</code>；否则需要在脚本头部加上：
-          <div class="code-block" id="wz-connect" style="margin-top:6px">// @connect *</div>
-        </li>
-        <li>在脚本设置里把「题库请求超时」调到 <b>60 秒以上</b>（AI 答题较慢）。</li>
-        <li>在「在线测试」页先用同样的题目验证一次，确认返回格式正确。</li>
-        <li>答题面板中，AI 生成的答案会显示 <b>AI</b> 蓝色标签，命中题库缓存会显示 <b>题库缓存</b> 标签。</li>
-      </ol>
+      ${wizardStepsHtml(true)}
     </div>
   `;
 
@@ -1122,6 +1183,12 @@ async function renderWizard() {
     }
   };
   $('#wz-gen').onclick = gen;
+  bindWizardActions(gen);
+  await gen();
+}
+
+/** 复制 / 下载配置（两种面板共用） */
+function bindWizardActions(regenerate) {
   $('#wz-copy').onclick = () => {
     if (!state.wizard) return toast('请先生成配置', 'err');
     copyText(state.wizard.json).then(() => toast('已复制到剪贴板'));
@@ -1134,6 +1201,116 @@ async function renderWizard() {
     a.download = 'answerer-wrapper.json';
     a.click();
   };
+  if (regenerate) state.wizardRegenerate = regenerate;
+}
+
+/**
+ * 普通用户面板：只有接入向导 + 自己的账号自助操作。
+ * 服务地址由管理员统一配置（后端对非管理员忽略 base_url 参数）。
+ */
+async function renderUserPanel() {
+  await refreshMe();
+  const configured = state.user && state.aiConfigured;
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <h3>我的接入信息</h3>
+        <span class="badge ${configured ? 'ok' : 'err'}">${configured ? 'API 正常' : 'API 未就绪'}</span>
+      </div>
+      <div class="kv" style="margin-bottom:12px">
+        <span class="k">账号</span><span class="v">${esc(state.user.username)}</span>
+        <span class="k">搜题 Token</span>
+        <span class="v"><span class="mono small" style="word-break:break-all" id="up-token">${esc(state.user.token)}</span></span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn small" id="up-copy-token">复制 Token</button>
+        <button class="btn small danger" id="up-reset-token">重置 Token</button>
+        <button class="btn small" id="up-password">修改登录密码</button>
+      </div>
+      <div class="alert info small" style="margin-top:14px">
+        搜题 Token 用于 OCS 脚本调用 <code>/search</code> 接口。重置后旧 Token 立即失效，
+        需要把新的题库配置重新粘贴到 OCS 中。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>OCS 题库配置</h3>
+        <span class="muted small">整段（含外层 [ ]）粘贴到 OCS「题库配置」中</span>
+      </div>
+      ${wizardNoteHtml(false)}
+      <div style="display:flex;gap:10px;margin:12px 0;flex-wrap:wrap">
+        <button class="btn primary" id="wz-gen">重新生成配置</button>
+        <button class="btn" id="wz-copy">复制 JSON</button>
+        <button class="btn" id="wz-download">下载 JSON</button>
+      </div>
+      <div class="code-block" id="wz-out">生成中…</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>使用步骤</h3></div>
+      ${wizardStepsHtml(false)}
+    </div>
+  `;
+
+  const gen = async () => {
+    try {
+      const data = await api('/wizard');
+      state.wizard = data;
+      $('#wz-out').textContent = data.json;
+      $('#wz-connect').textContent = data.connect_hint;
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+  $('#wz-gen').onclick = gen;
+  bindWizardActions(gen);
+
+  $('#up-copy-token').onclick = () => copyText(state.user.token).then(() => toast('Token 已复制'));
+
+  $('#up-reset-token').onclick = async () => {
+    if (!(await confirmDialog('重置 Token', '重置后旧 Token 立即失效，需要把新的题库配置重新粘贴到 OCS 中。确定继续？'))) return;
+    try {
+      const r = await api('/auth/token', { method: 'POST' });
+      state.user = r.user;
+      await copyText(r.token).catch(() => {});
+      toast('新 Token 已生成并复制');
+      await renderUserPanel();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+
+  $('#up-password').onclick = () => {
+    openModal(
+      '修改登录密码',
+      `
+      <label class="field"><span>原密码</span><input id="up-old" type="password" /></label>
+      <label class="field"><span>新密码（至少 6 位）</span><input id="up-new" type="password" /></label>
+      <label class="field"><span>确认新密码</span><input id="up-new2" type="password" /></label>
+      `,
+      `<button class="btn" id="cancel">取消</button><button class="btn primary" id="save">保存</button>`,
+    );
+    $('#cancel').onclick = closeModal;
+    $('#save').onclick = async () => {
+      const pw = $('#up-new').value;
+      if (pw.length < 6) return toast('新密码至少 6 位', 'err');
+      if (pw !== $('#up-new2').value) return toast('两次输入的新密码不一致', 'err');
+      try {
+        await api('/auth/password', {
+          method: 'POST',
+          body: { old_password: $('#up-old').value, new_password: pw },
+        });
+        state.user.must_change_password = 0;
+        closeModal();
+        toast('密码已更新');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+  };
+
   await gen();
 }
 
@@ -1266,6 +1443,7 @@ async function renderUsers() {
               <td class="small muted">${u.last_login_at ? fmtTime(u.last_login_at) : '从未登录'}</td>
               <td class="actions">
                 <button class="btn small" data-u-edit="${u.id}">编辑</button>
+                <button class="btn small" data-u-dist="${u.id}">分发信息</button>
                 <button class="btn small" data-u-token="${u.id}">重置Token</button>
                 <button class="btn small danger" data-u-del="${u.id}">删除</button>
               </td>
@@ -1278,6 +1456,7 @@ async function renderUsers() {
     </div>
     <div class="alert info small">
       搜题 Token 用于 OCS 脚本调用 <code>/search</code> 接口，泄露后请立即点「重置Token」并更新脚本里的题库配置。
+      本系统<b>不开放注册</b>，也不进行计费，账号仅作分发。
     </div>
   `;
 
@@ -1299,29 +1478,59 @@ async function renderUsers() {
         </label>
         <label class="field"><span>备注</span><input id="nu-note" /></label>
       </div>
+      <label class="field" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nu-mustchange" style="width:auto" checked />
+        <span style="margin:0">首次登录强制修改密码</span>
+      </label>
       `,
       `<button class="btn" id="cancel">取消</button><button class="btn primary" id="save">创建</button>`,
     );
     $('#cancel').onclick = closeModal;
     $('#save').onclick = async () => {
+      const password = $('#nu-pass').value;
       try {
-        await api('/users', {
+        const r = await api('/users', {
           method: 'POST',
           body: {
             username: $('#nu-name').value.trim(),
-            password: $('#nu-pass').value,
+            password,
             role: $('#nu-role').value,
             note: $('#nu-note').value,
+            must_change_password: $('#nu-mustchange').checked,
           },
         });
         closeModal();
         toast('用户已创建');
         reload();
+        await showDistributeInfo(r.user, password);
       } catch (err) {
         toast(err.message, 'err');
       }
     };
   };
+
+  // 一键分发：展示可复制的账号 + 接入信息
+  const showDistributeInfo = async (user, password) => {
+    const text = distributionText(user, password);
+    openModal(
+      '账号分发信息',
+      `
+      <p class="muted small" style="line-height:1.7">把下面这段发给用户，对方登录后即可在「接入向导」页自助获取题库配置。</p>
+      <div class="code-block" style="white-space:pre-wrap;line-height:1.8">${esc(text)}</div>
+      ${password ? '' : '<div class="muted small">密码无法回显，如需告知用户请直接重置密码。</div>'}
+      `,
+      `<button class="btn" id="cancel">关闭</button><button class="btn primary" id="copy">复制全部</button>`,
+    );
+    $('#cancel').onclick = closeModal;
+    $('#copy').onclick = () => copyText(text).then(() => toast('分发信息已复制'));
+  };
+
+  $$('[data-u-dist]').forEach((btn) => {
+    btn.onclick = () => {
+      const u = data.users.find((x) => x.id === Number(btn.dataset.uDist));
+      showDistributeInfo(u, '');
+    };
+  });
 
   $$('[data-u-edit]').forEach((btn) => {
     btn.onclick = () => {
@@ -1345,13 +1554,22 @@ async function renderUsers() {
           </label>
         </div>
         <label class="field"><span>备注</span><input id="eu-note" value="${esc(u.note || '')}" /></label>
+        <label class="field" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="eu-mustchange" style="width:auto" ${u.must_change_password ? 'checked' : ''} />
+          <span style="margin:0">下次登录强制修改密码</span>
+        </label>
         <div class="muted small">创建于 ${fmtTime(u.created_at)}</div>
         `,
         `<button class="btn" id="cancel">取消</button><button class="btn primary" id="save">保存</button>`,
       );
       $('#cancel').onclick = closeModal;
       $('#save').onclick = async () => {
-        const body = { role: $('#eu-role').value, status: $('#eu-status').value, note: $('#eu-note').value };
+        const body = {
+          role: $('#eu-role').value,
+          status: $('#eu-status').value,
+          note: $('#eu-note').value,
+          must_change_password: $('#eu-mustchange').checked,
+        };
         if ($('#eu-pass').value) body.password = $('#eu-pass').value;
         try {
           await api(`/users/${u.id}`, { method: 'PATCH', body });
@@ -1517,6 +1735,7 @@ async function renderSettings() {
   try {
     const data = await api('/auth/me');
     state.user = data.user;
+    state.aiConfigured = Boolean(data.ai_configured);
     showApp();
     await loadCommon();
   } catch {

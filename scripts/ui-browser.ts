@@ -297,6 +297,77 @@ async function main() {
     await cdp.screenshot('13-provider-modal.png', false);
     await cdp.eval(`document.querySelector('#modal-close').click()`);
 
+    /* ---------- 普通用户视角：仅有接入向导 + 自助账号操作 ---------- */
+    const REG_NAME = 'ui_user_' + Date.now().toString().slice(-5);
+    const REG_PASS = 'ui-pass-123';
+    const created = await cdp.eval(`(async () => {
+      const r = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: ${JSON.stringify(REG_NAME)}, password: ${JSON.stringify(REG_PASS)}, role: 'user', must_change_password: false })
+      });
+      return (await r.json()).code;
+    })()`);
+    check('创建测试用普通用户', created === 1, String(created));
+
+    await cdp.eval(`document.querySelector('#logout-btn').click()`);
+    await waitFor(() => cdp.eval(`!document.querySelector('#login-view').classList.contains('hidden')`), 10000);
+
+    cdp.clearEvents();
+    await cdp.eval(`(() => {
+      document.querySelector('#login-username').value = ${JSON.stringify(REG_NAME)};
+      document.querySelector('#login-password').value = ${JSON.stringify(REG_PASS)};
+      document.querySelector('#login-form').dispatchEvent(new Event('submit', { cancelable: true }));
+      return true;
+    })()`);
+    await waitFor(() => cdp.eval(`!document.querySelector('#app-view').classList.contains('hidden')`), 10000);
+    await waitFor(() => cdp.eval(`Boolean(document.querySelector('#up-token'))`), 12000).catch(() => false);
+
+    const userNav = await cdp.eval(
+      `[...document.querySelectorAll('.nav-item')].filter(n => !n.classList.contains('hidden')).map(n => n.dataset.page)`,
+    );
+    check('普通用户侧边栏仅剩接入向导', JSON.stringify(userNav) === JSON.stringify(['wizard']), JSON.stringify(userNav));
+    check('普通用户默认落在接入向导', (await cdp.eval(`document.querySelector('#page-title').textContent`)) === '接入向导');
+
+    const cfgText = await cdp.eval(`document.querySelector('#wz-out').innerText.slice(0, 200)`);
+    check('普通用户自动获得题库配置', cfgText.includes('GM_xmlhttpRequest') && cfgText.includes('/search'), cfgText.replace(/\n/g, ' ').slice(0, 120));
+    check('普通用户看不到服务地址/账号选择', (await cdp.eval(`Boolean(document.querySelector('#wz-base') || document.querySelector('#wz-user'))`)) === false);
+    check('普通用户可见 API 状态', (await cdp.eval(`document.querySelector('#ai-status').textContent.length > 0`)) === true);
+    check('普通用户可见自己的 Token', (await cdp.eval(`(document.querySelector('#up-token') || {}).textContent || ''`)).length > 16);
+    check(
+      '普通用户无法跳转到管理员页面',
+      (await cdp.eval(`(() => { navigate('dashboard'); return state.page; })()`)) === 'wizard',
+    );
+    await cdp.screenshot('14-user-panel.png');
+
+    /* ---------- 普通用户自助重置 Token ---------- */
+    const tokenBefore = await cdp.eval(`document.querySelector('#up-token').textContent`);
+    await cdp.eval(`document.querySelector('#up-reset-token').click()`);
+    await waitFor(() => cdp.eval(`Boolean(document.querySelector('#cd-yes'))`), 6000);
+    await cdp.eval(`document.querySelector('#cd-yes').click()`);
+    const tokenAfter = await waitFor(async () => {
+      const t = await cdp.eval(`(document.querySelector('#up-token') || {}).textContent || ''`);
+      return t && t !== tokenBefore ? t : '';
+    }, 12000).catch(() => '');
+    check('普通用户可在面板自助重置 Token', Boolean(tokenAfter), String(tokenAfter).slice(0, 12));
+
+    /* ---------- 普通用户自助修改密码 ---------- */
+    await cdp.eval(`document.querySelector('#up-password').click()`);
+    await waitFor(() => cdp.eval(`Boolean(document.querySelector('#up-old'))`), 6000);
+    await cdp.eval(`(() => {
+      document.querySelector('#up-old').value = ${JSON.stringify(REG_PASS)};
+      document.querySelector('#up-new').value = 'new-ui-pass-1';
+      document.querySelector('#up-new2').value = 'new-ui-pass-1';
+      document.querySelector('#save').click();
+      return true;
+    })()`);
+    const pwToast = await waitFor(
+      () => cdp.eval(`[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('密码已更新'))`),
+      10000,
+    ).catch(() => false);
+    check('普通用户可在面板自助修改密码', pwToast === true);
+    check('普通用户面板无 JS 异常', cdp.consoleErrors().length === 0, cdp.consoleErrors().join(' | '));
+
     console.log('\n============ 浏览器渲染检查 ============');
     let failed = 0;
     for (const r of results) {

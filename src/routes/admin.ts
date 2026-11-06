@@ -78,7 +78,7 @@ router.post('/auth/logout', requireAuth, (req, res) => {
 });
 
 router.get('/auth/me', requireAuth, (req, res) => {
-  ok(res, { user: publicUser(req.user!) });
+  ok(res, { user: publicUser(req.user!), ai_configured: runtimeAiConfigs().length > 0 });
 });
 
 router.post('/auth/password', requireAuth, (req, res) => {
@@ -91,6 +91,14 @@ router.post('/auth/password', requireAuth, (req, res) => {
     .prepare(`UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?`)
     .run(hashPassword(newPassword), user.id);
   ok(res);
+});
+
+/** 普通用户自助重置自己的搜题 Token（旧 Token 立即失效） */
+router.post('/auth/token', requireAuth, (req, res) => {
+  const token = randomToken(24);
+  getDb().prepare(`UPDATE users SET token=? WHERE id=?`).run(token, req.user!.id);
+  const user = getDb().prepare(`SELECT * FROM users WHERE id=?`).get(req.user!.id) as UserRow;
+  ok(res, { user: publicUser(user), token });
 });
 
 /* ============================ 用户管理（admin） ============================ */
@@ -112,12 +120,13 @@ router.post('/users', requireAuth, requireAdmin, (req, res) => {
   if (exists) return bad(res, '用户名已存在');
 
   const now = nowSec();
+  const mustChange = req.body?.must_change_password ? 1 : 0;
   const info = db
     .prepare(
       `INSERT INTO users (username, password_hash, role, token, status, must_change_password, note, created_at)
-       VALUES (?,?,?,?, 'active', 0, ?, ?)`,
+       VALUES (?,?,?,?, 'active', ?, ?, ?)`,
     )
-    .run(username, hashPassword(password), role, randomToken(24), String(req.body?.note ?? ''), now);
+    .run(username, hashPassword(password), role, randomToken(24), mustChange, String(req.body?.note ?? ''), now);
   const user = db.prepare(`SELECT * FROM users WHERE id=?`).get(info.lastInsertRowid) as UserRow;
   ok(res, { user: publicUser(user) });
 });
@@ -164,6 +173,10 @@ router.patch('/users/:id', requireAuth, requireAdmin, (req, res) => {
     sets.push('token=?');
     args.push(randomToken(24));
   }
+  if (req.body?.must_change_password !== undefined) {
+    sets.push('must_change_password=?');
+    args.push(req.body.must_change_password ? 1 : 0);
+  }
 
   if (sets.length === 0) return bad(res, '没有需要更新的字段');
   args.push(id);
@@ -189,7 +202,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, (req, res) => {
 
 /* ============================ 题库管理 ============================ */
 
-router.get('/questions', requireAuth, (req, res) => {
+router.get('/questions', requireAuth, requireAdmin, (req, res) => {
   const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
   const pageSize = Math.min(200, Math.max(1, Number.parseInt(String(req.query.page_size ?? '20'), 10) || 20));
   const keyword = String(req.query.keyword ?? '').trim();
@@ -282,7 +295,7 @@ router.post('/questions/delete', requireAuth, requireAdmin, (req, res) => {
 });
 
 /** 导出题库 */
-router.get('/questions/export', requireAuth, (req, res) => {
+router.get('/questions/export', requireAuth, requireAdmin, (req, res) => {
   const format = String(req.query.format ?? 'json').toLowerCase();
   const rows = getDb().prepare(`SELECT * FROM questions ORDER BY id ASC`).all() as QuestionRow[];
   const stamp = new Date().toISOString().slice(0, 10);
@@ -416,7 +429,7 @@ function parseCsv(text: string): any[] {
 
 /* ============================ 日志 & 统计 ============================ */
 
-router.get('/logs', requireAuth, (req, res) => {
+router.get('/logs', requireAuth, requireAdmin, (req, res) => {
   const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
   const pageSize = Math.min(200, Math.max(1, Number.parseInt(String(req.query.page_size ?? '30'), 10) || 30));
   const hit = String(req.query.hit ?? '').trim();
@@ -466,7 +479,7 @@ router.delete('/logs', requireAuth, requireAdmin, (req, res) => {
   ok(res, { deleted: info.changes });
 });
 
-router.get('/stats', requireAuth, (req, res) => {
+router.get('/stats', requireAuth, requireAdmin, (req, res) => {
   const db = getDb();
   const dayAgo = nowSec() - 86400;
   const total = (db.prepare(`SELECT COUNT(*) AS c FROM requests`).get() as { c: number }).c;
@@ -557,7 +570,7 @@ router.get('/stats', requireAuth, (req, res) => {
 
 /* ============================ 设置 ============================ */
 
-router.get('/settings', requireAuth, (req, res) => {
+router.get('/settings', requireAuth, requireAdmin, (req, res) => {
   const db = getDb();
   const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
   const map: Record<string, string> = {};
@@ -772,7 +785,7 @@ router.post('/providers/test', requireAuth, requireAdmin, async (req, res) => {
 
 /* ============================ 在线测试台 ============================ */
 
-router.post('/debug/solve', requireAuth, async (req, res) => {
+router.post('/debug/solve', requireAuth, requireAdmin, async (req, res) => {
   const useCache = Boolean(req.body?.use_cache);
   const title = String(req.body?.title ?? '').trim();
   const type = normalizeType(req.body?.type);
@@ -848,12 +861,13 @@ export function buildAnswererWrapper(
 }
 
 router.get('/wizard', requireAuth, (req, res) => {
-  const base = String(req.query.base_url ?? '').trim().replace(/\/+$/, '');
-  const tokenParam = String(req.query.token ?? '').trim();
-  const user =
-    req.user!.role === 'admin' && tokenParam
-      ? (getDb().prepare(`SELECT * FROM users WHERE token=?`).get(tokenParam) as UserRow | undefined)
-      : req.user!;
+  const isAdmin = req.user!.role === 'admin';
+  // 服务地址与使用者账号只允许管理员覆盖，普通用户固定使用自身账号与系统地址
+  const base = isAdmin ? String(req.query.base_url ?? '').trim().replace(/\/+$/, '') : '';
+  const tokenParam = isAdmin ? String(req.query.token ?? '').trim() : '';
+  const user = tokenParam
+    ? (getDb().prepare(`SELECT * FROM users WHERE token=?`).get(tokenParam) as UserRow | undefined)
+    : req.user!;
   if (!user) return bad(res, 'token 无效', 404);
   const fallback = `${req.protocol}://${req.get('host')}`;
   const baseUrl = base || getSetting('public_base_url') || fallback;
@@ -872,6 +886,8 @@ router.get('/wizard', requireAuth, (req, res) => {
     answerer_wrapper: wrapper,
     json: JSON.stringify(wrapper, null, 2),
     connect_hint: `// @connect ${host}\n// @connect *`,
+    is_admin: isAdmin,
+    ai_configured: runtimeAiConfigs().length > 0,
     curl: `curl -X POST '${baseUrl}/search' -H 'Content-Type: application/json' -d '{"title":"1+1=?","type":"single","options":"A.1\\nB.2\\nC.3","token":"${user.token}"}'`,
   });
 });

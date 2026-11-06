@@ -306,12 +306,27 @@ async function main() {
   });
   check('测试台仅 AI 模式', debugAi.json.data.hit === 'ai', JSON.stringify(debugAi.json).slice(0, 200));
 
-  /* ---- 普通用户权限边界（方案 A：只读 + 自助接入） ---- */
+  /* ---- 普通用户权限边界（方案 B：只读权限全收，仅接入向导 + 自助账号操作） ---- */
   const adminCookie = cookie;
   const userLogin = await call('/api/auth/login', { method: 'POST', body: { username: uname, password: 'pass123456' } });
   check('普通用户登录', userLogin.json.code === 1 && userLogin.json.data.user.role === 'user');
-  const userReadQs = await call('/api/questions?page=1&page_size=5');
-  check('普通用户可只读浏览题库', userReadQs.json.code === 1);
+
+  const userMe = await call('/api/auth/me');
+  check('普通用户 /auth/me 返回 API 状态', typeof userMe.json.data?.ai_configured === 'boolean', JSON.stringify(userMe.json).slice(0, 150));
+
+  for (const [name, path] of [
+    ['题库列表', '/api/questions?page=1&page_size=5'],
+    ['题库导出', '/api/questions/export?format=json'],
+    ['调用日志', '/api/logs?page=1'],
+    ['统计数据', '/api/stats'],
+    ['系统设置', '/api/settings'],
+    ['AI 提供商', '/api/providers'],
+    ['用户列表', '/api/users'],
+  ] as [string, string][]) {
+    const r = await call(path);
+    check(`普通用户禁止访问${name} → 403`, r.status === 403, String(r.status));
+  }
+
   const userWriteQ = await call('/api/questions', {
     method: 'POST',
     body: { title: '越权录入', type: 'single', options: 'A.1\nB.2', answer: '1', answer_letter: 'A' },
@@ -319,17 +334,50 @@ async function main() {
   check('普通用户禁止写入题库 → 403', userWriteQ.status === 403);
   const userDelQ = await call(`/api/questions/${qid}`, { method: 'DELETE' });
   check('普通用户禁止删除题库 → 403', userDelQ.status === 403);
-  const userProv = await call('/api/providers');
-  check('普通用户禁止读取 AI 提供商 → 403', userProv.status === 403);
-  const userLogs = await call('/api/logs?user_id=1');
+  const userDebug = await call('/api/debug/solve', { method: 'POST', body: { title: '越权测试', use_cache: false } });
+  check('普通用户禁止使用在线测试台 → 403', userDebug.status === 403, String(userDebug.status));
+
+  /* ---- 普通用户自助接入：强制使用自身账号与服务地址 ---- */
+  const userWz = await call('/api/wizard?token=fake_other_token&base_url=http://evil.example.com');
+  check('普通用户向导仅返回自身 Token', userWz.json.code === 1 && userWz.json.data.token === newToken, JSON.stringify(userWz.json).slice(0, 200));
   check(
-    '普通用户日志仅限本人',
-    userLogs.json.code === 1 && userLogs.json.data.logs.every((l: any) => l.user_id === uid),
+    '普通用户向导忽略外部 base_url',
+    userWz.json.data?.base_url === BASE && !userWz.json.data?.json.includes('evil.example.com'),
+    String(userWz.json.data?.base_url),
   );
-  const userWz = await call('/api/wizard?token=fake_other_token');
-  check('普通用户向导仅返回自身 Token', userWz.json.code === 1 && userWz.json.data.token === newToken);
+  check('普通用户向导返回 is_admin=false', userWz.json.data?.is_admin === false);
+
+  /* ---- 普通用户自助重置 Token ---- */
+  const selfReset = await call('/api/auth/token', { method: 'POST' });
+  check('普通用户自助重置 Token', selfReset.json.code === 1 && selfReset.json.data.token !== newToken);
+  const selfToken = selfReset.json.data.token;
+  const oldTokenDead = await call(`/search?title=old&type=single&token=${encodeURIComponent(newToken)}`);
+  check('旧 Token 重置后失效 → 401', oldTokenDead.status === 401, String(oldTokenDead.status));
+  const newTokenAlive = await call(`/search?title=${encodeURIComponent('自助重置后的搜题')}&type=single&options=${encodeURIComponent('A.1\nB.2')}&token=${encodeURIComponent(selfToken)}`);
+  check('新 Token 可正常搜题', newTokenAlive.json.code === 1, JSON.stringify(newTokenAlive.json).slice(0, 200));
+  const wzAfterReset = await call('/api/wizard');
+  check('重置后向导使用新 Token', wzAfterReset.json.data?.token === selfToken);
+
+  /* ---- 普通用户自助改密 ---- */
+  const selfPw = await call('/api/auth/password', { method: 'POST', body: { old_password: 'pass123456', new_password: 'newpass123' } });
+  check('普通用户自助修改密码', selfPw.json.code === 1, JSON.stringify(selfPw.json).slice(0, 150));
+  await call('/api/auth/logout', { method: 'POST' });
+  const relogin = await call('/api/auth/login', { method: 'POST', body: { username: uname, password: 'newpass123' } });
+  check('新密码可登录', relogin.json.code === 1, JSON.stringify(relogin.json).slice(0, 150));
   await call('/api/auth/logout', { method: 'POST' });
   cookie = adminCookie;
+
+  /* ---- 管理员创号支持首次登录强制改密 ---- */
+  const mcName = 'e2e_mc_' + Date.now().toString().slice(-5);
+  const mcUser = await call('/api/users', {
+    method: 'POST',
+    body: { username: mcName, password: 'pass123456', role: 'user', must_change_password: true },
+  });
+  check('创号支持首次登录强制改密', mcUser.json.data?.user?.must_change_password === 1, JSON.stringify(mcUser.json).slice(0, 150));
+  const mcId = mcUser.json.data?.user?.id;
+  const mcOff = await call(`/api/users/${mcId}`, { method: 'PATCH', body: { must_change_password: false } });
+  check('可取消强制改密', mcOff.json.data?.user?.must_change_password === 0, JSON.stringify(mcOff.json).slice(0, 150));
+  await call(`/api/users/${mcId}`, { method: 'DELETE' });
 
   /* ---- 改密 & 登出 ---- */
   const chpw = await call('/api/auth/password', { method: 'POST', body: { old_password: PASS, new_password: PASS } });

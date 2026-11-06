@@ -24,6 +24,7 @@
         </label>
         <button class="btn primary block" type="submit" id="login-btn">登录</button>
         <div class="alert error hidden" id="login-error"></div>
+        <p class="muted small" style="margin:18px 0 0">本系统不开放注册，账号由管理员统一创建分发。</p>
       </form>
     </div>
 
@@ -32,13 +33,13 @@
       <aside class="sidebar">
         <div class="brand"><span>📚</span><b>OCS 题库</b></div>
         <nav id="nav">
-          <a data-page="dashboard" class="nav-item active"><i>📈</i><span>总览</span></a>
+          <a data-page="dashboard" class="nav-item admin-only active"><i>📈</i><span>总览</span></a>
           <a data-page="providers" class="nav-item admin-only"><i>🤖</i><span>AI 配置</span></a>
           <a data-page="prompts" class="nav-item admin-only"><i>📝</i><span>提示词</span></a>
-          <a data-page="questions" class="nav-item"><i>🗂️</i><span>题库管理</span></a>
-          <a data-page="logs" class="nav-item"><i>🧾</i><span>调用日志</span></a>
+          <a data-page="questions" class="nav-item admin-only"><i>🗂️</i><span>题库管理</span></a>
+          <a data-page="logs" class="nav-item admin-only"><i>🧾</i><span>调用日志</span></a>
           <a data-page="wizard" class="nav-item"><i>🔌</i><span>接入向导</span></a>
-          <a data-page="playground" class="nav-item"><i>🧪</i><span>在线测试</span></a>
+          <a data-page="playground" class="nav-item admin-only"><i>🧪</i><span>在线测试</span></a>
           <a data-page="users" class="nav-item admin-only"><i>👥</i><span>用户管理</span></a>
           <a data-page="settings" class="nav-item admin-only"><i>⚙️</i><span>系统设置</span></a>
         </nav>

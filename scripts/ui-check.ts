@@ -41,12 +41,24 @@ for (const fn of [
   'renderQuestions',
   'renderLogs',
   'renderWizard',
+  'renderUserPanel',
   'renderPlayground',
   'renderUsers',
   'renderSettings',
 ]) {
   check(`存在 ${fn}`, appJs.includes(`function ${fn}`) || appJs.includes(`async function ${fn}`));
 }
+
+/* ---- 普通用户面板：管理页导航必须全部是 admin-only ---- */
+for (const page of ['dashboard', 'providers', 'prompts', 'questions', 'logs', 'playground', 'users', 'settings']) {
+  const m = html.match(new RegExp(`data-page="${page}" class="([^"]*)"`));
+  check(`导航 ${page} 仅管理员可见`, Boolean(m && m[1].includes('admin-only')), m ? m[1] : '未找到导航项');
+}
+check(
+  '普通用户导航仅保留接入向导',
+  /data-page="wizard" class="([^"]*)"/.test(html) &&
+    !/data-page="wizard" class="([^"]*admin-only[^"]*)"/.test(html),
+);
 
 /* ---- 导航项与页面 key 对应 ---- */
 const pageKeys = [...html.matchAll(/data-page="([^"]+)"/g)].map((m) => m[1]);
@@ -65,6 +77,7 @@ const backendRoutes = [
   '/auth/me',
   '/auth/logout',
   '/auth/password',
+  '/auth/token',
   '/users',
   '/questions',
   '/questions/export',
