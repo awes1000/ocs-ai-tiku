@@ -6,10 +6,11 @@ AI 的答案会自动沉淀进题库，下次同类题直接走缓存。
 
 自带完整 WebGUI：AI 配置 / 提示词 / 题库管理 / 用户管理 / 日志统计 / 在线测试 / 一键导出接入配置。
 
-[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Arch](https://img.shields.io/badge/arch-x64%20%7C%20arm64-blue)](#八部署提示)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-170%20checks-brightgreen)](./scripts/verify.ts)
+[![Tests](https://img.shields.io/badge/tests-178%20checks-brightgreen)](./scripts/verify.ts)
 
 ```
 OCS 脚本 ──POST /search──▶ 后端 ──▶ 题库命中？ ──是──▶ 直接返回（cache/fuzzy 标签）
@@ -179,6 +180,7 @@ npm start
 | `PORT` | `8060` | 监听端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `DB_PATH` | `data/tiku.db` | SQLite 路径 |
+| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | 反向代理信任策略（`true` 全部信任 / `false` 不信任） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / 随机 | 首次启动创建的管理员；密码为空则随机生成并打印 |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | 空 | AI 兜底配置（WebGUI 里配置优先） |
 | `AI_API_TYPE` | `chat_completions` | `responses` 或 `chat_completions` |
@@ -220,7 +222,7 @@ HTTP 鉴权、登录会话、统计、接入向导、题库接口。
 | 阶段 | 内容 |
 |---|---|
 | 冒烟测试 | 35 项：纯函数 + mock LLM 全流水线 |
-| 后端端到端 | 37 项：登录/改密/登出、提供商增删改测、设置、提示词、用户 CRUD、题库 CRUD/导入导出、日志统计、接入向导 handler 实测 |
+| 后端端到端 | 45 项：登录/改密/登出、提供商增删改测、设置、提示词、用户 CRUD、普通用户权限边界、题库 CRUD/导入导出、日志统计、接入向导 handler 实测 |
 | 前端静态检查 | 70 项：app.js 语法、DOM ID 引用、页面函数、导航映射、API 路径与后端一致性 |
 | 浏览器渲染 | 28 项：无头 Chrome 真实登录、逐个页面渲染无异常、测试台真实请求、弹窗交互（截图存 `data/shot/`） |
 
@@ -228,8 +230,27 @@ HTTP 鉴权、登录会话、统计、接入向导、题库接口。
 
 ## 八、部署提示
 
+### 1. 原生运行（x64 / ARM64）
+
 - 单进程即可：`node_modules/.bin/tsx src/index.ts`（或 `npm start`），数据都在 `data/tiku.db`（WAL 模式）。
-- 长期运行建议用 PM2 / systemd / NSSM 托管，并把 `data/` 目录纳入备份。
+- **多架构兼容（x64 / ARM64）**：`better-sqlite3` 在主流 Linux/macOS/Windows 的 x64 与 ARM64（如树莓派、Apple Silicon、Oracle ARM、NAS）下会自动拉取预编译二进制；若在特殊发行版或新 Node ABI 下回退源码编译，请确保系统已安装 `python3`、`make`、`g++`（Debian/Ubuntu：`apt install -y python3 make g++`）。
+- 长期运行建议用 PM2 / systemd / NSSM 托管，服务已内置 `SIGINT` / `SIGTERM` 优雅停机与 WAL 落盘。
+
+### 2. Docker / Docker Compose 部署（支持 `linux/amd64` 与 `linux/arm64`）
+
+```bash
+# 一键构建并后台启动（数据持久化在 ./data）
+docker compose up -d --build
+
+# 查看首次启动生成的初始管理员密码与 Token
+docker compose logs -f
+
+# 多架构镜像构建示例（Buildx）
+docker buildx build --platform linux/amd64,linux/arm64 -t ocs-tiku:latest .
+```
+
+### 3. 安全与反代建议
+
 - 公网部署请务必：修改初始密码、给每个使用者单独建账号、按需调低 `rate_limit_per_min`。
 - 因为脚本走 `GM_xmlhttpRequest`，后端**不必**配 HTTPS；但如果想让普通浏览器直连，建议在 Nginx/Caddy 后面加 TLS。
 

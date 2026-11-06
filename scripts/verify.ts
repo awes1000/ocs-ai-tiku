@@ -2,7 +2,7 @@
  * 一键回归：起一个全新实例（临时 DB）→ smoke → e2e → UI 静态 → 浏览器渲染 → 清理
  * 用法：npm run verify
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -108,17 +108,39 @@ async function main() {
     const uiLine = ui.out.match(/共 \d+ 项，通过 \d+ 项[^\n]*/)?.[0] || '';
     summary.push({ name: '前端静态检查', ok: ui.code === 0, out: uiLine });
 
-    // 5. 浏览器渲染（无头 Chrome/Edge）
+    // 5. 浏览器渲染（无头 Chrome/Edge，兼容 Windows / macOS / Linux x64 & ARM64）
+    const localAppData = process.env.LOCALAPPDATA || '';
     const chromePaths = [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      ...(localAppData ? [path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe')] : []),
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
       '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
       '/usr/bin/chromium',
       '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
+      '/usr/lib/chromium/chromium',
+      '/usr/lib/chromium-browser/chromium-browser',
     ];
-    const chrome = process.env.CHROME_PATH || chromePaths.find((p) => fs.existsSync(p));
+    let chrome = process.env.CHROME_PATH || chromePaths.find((p) => fs.existsSync(p));
+    if (!chrome && process.platform !== 'win32') {
+      for (const bin of ['google-chrome', 'chromium', 'chromium-browser', 'microsoft-edge']) {
+        try {
+          const out = execFileSync('which', [bin], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          if (out && fs.existsSync(out)) {
+            chrome = out;
+            break;
+          }
+        } catch {
+          /* try next */
+        }
+      }
+    }
     if (chrome) {
       const br = await run('scripts/ui-browser.ts', {
         BASE: `http://127.0.0.1:${PORT}`,

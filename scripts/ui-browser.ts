@@ -2,8 +2,9 @@
  * 极简 CDP 驱动：用无头 Chrome 真实渲染 WebGUI，抓取各页面运行时错误与渲染结果。
  * 前置：服务已运行在 BASE（默认 http://127.0.0.1:8061），Chrome 路径已存在。
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8060';
@@ -11,20 +12,52 @@ const USER = process.env.ADMIN_USERNAME || 'admin';
 const PASS = process.env.ADMIN_PASSWORD || 'test-admin-pass';
 const OUT_DIR = path.resolve(__dirname, '..', 'data', 'shot');
 const CHROME = process.env.CHROME_PATH || defaultChromePath();
-const PORT = 9333;
 
-/** 按平台挑选默认浏览器路径（可用 CHROME_PATH 覆盖） */
+/** 按平台（Windows / macOS / Linux x64 & ARM64）挑选默认浏览器路径（可用 CHROME_PATH 覆盖） */
 function defaultChromePath(): string {
+  const localAppData = process.env.LOCALAPPDATA || '';
   const candidates = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ...(localAppData ? [path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe')] : []),
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    '/usr/lib/chromium/chromium',
+    '/usr/lib/chromium-browser/chromium-browser',
   ];
-  return candidates.find((p) => fs.existsSync(p)) || candidates[0];
+  const found = candidates.find((p) => fs.existsSync(p));
+  if (found) return found;
+  if (process.platform !== 'win32') {
+    for (const bin of ['google-chrome', 'chromium', 'chromium-browser', 'microsoft-edge']) {
+      try {
+        const out = execFileSync('which', [bin], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (out && fs.existsSync(out)) return out;
+      } catch {
+        /* try next */
+      }
+    }
+  }
+  return candidates[0];
+}
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 9333;
+      srv.close((err) => (err ? reject(err) : resolve(port)));
+    });
+    srv.on('error', reject);
+  });
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -119,10 +152,14 @@ class CDP {
 }
 
 async function main() {
+  const PORT = Number(process.env.CDP_PORT) || (await getFreePort());
   const chrome = spawn(
     CHROME,
     [
       '--headless=new',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
       '--disable-gpu',
       '--no-first-run',
       '--no-default-browser-check',
