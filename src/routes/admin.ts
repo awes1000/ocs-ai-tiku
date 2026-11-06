@@ -220,7 +220,7 @@ router.get('/questions', requireAuth, (req, res) => {
   ok(res, { total, page, page_size: pageSize, questions: rows });
 });
 
-router.post('/questions', requireAuth, (req, res) => {
+router.post('/questions', requireAuth, requireAdmin, (req, res) => {
   const title = String(req.body?.title ?? '').trim();
   if (!title) return bad(res, '题目不能为空');
   const type = normalizeType(req.body?.type);
@@ -241,7 +241,7 @@ router.post('/questions', requireAuth, (req, res) => {
   ok(res, { question: row });
 });
 
-router.patch('/questions/:id', requireAuth, (req, res) => {
+router.patch('/questions/:id', requireAuth, requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const db = getDb();
   const row = db.prepare(`SELECT * FROM questions WHERE id=?`).get(id) as QuestionRow | undefined;
@@ -264,14 +264,14 @@ router.patch('/questions/:id', requireAuth, (req, res) => {
   ok(res, { question: db.prepare(`SELECT * FROM questions WHERE id=?`).get(id) });
 });
 
-router.delete('/questions/:id', requireAuth, (req, res) => {
+router.delete('/questions/:id', requireAuth, requireAdmin, (req, res) => {
   const info = getDb().prepare(`DELETE FROM questions WHERE id=?`).run(Number(req.params.id));
   if (info.changes === 0) return bad(res, '题目不存在', 404);
   ok(res);
 });
 
 /** 批量删除 */
-router.post('/questions/delete', requireAuth, (req, res) => {
+router.post('/questions/delete', requireAuth, requireAdmin, (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
   if (!ids.length) return bad(res, '请选择要删除的题目');
   const db = getDb();
@@ -317,7 +317,7 @@ router.get('/questions/export', requireAuth, (req, res) => {
 });
 
 /** 导入题库：JSON 数组 / {questions:[...]} / CSV */
-router.post('/questions/import', requireAuth, (req, res) => {
+router.post('/questions/import', requireAuth, requireAdmin, (req, res) => {
   const payload = req.body?.data;
   const overwrite = Boolean(req.body?.overwrite);
   let items: any[] = [];
@@ -429,7 +429,10 @@ router.get('/logs', requireAuth, (req, res) => {
     where.push('r.hit=?');
     args.push(hit);
   }
-  if (Number.isFinite(userId)) {
+  if (req.user!.role !== 'admin') {
+    where.push('r.user_id=?');
+    args.push(req.user!.id);
+  } else if (Number.isFinite(userId)) {
     where.push('r.user_id=?');
     args.push(userId);
   }
@@ -635,7 +638,7 @@ function ppublic(p: ProviderRow, maskKey = true) {
   };
 }
 
-router.get('/providers', requireAuth, (_req, res) => {
+router.get('/providers', requireAuth, requireAdmin, (_req, res) => {
   ok(res, { providers: listProviders().map((p) => ppublic(p)) });
 });
 
@@ -810,9 +813,10 @@ export function buildAnswererWrapper(baseUrl: string, token: string, opts?: { na
 router.get('/wizard', requireAuth, (req, res) => {
   const base = String(req.query.base_url ?? '').trim().replace(/\/+$/, '');
   const tokenParam = String(req.query.token ?? '').trim();
-  const user = tokenParam
-    ? (getDb().prepare(`SELECT * FROM users WHERE token=?`).get(tokenParam) as UserRow | undefined)
-    : req.user!;
+  const user =
+    req.user!.role === 'admin' && tokenParam
+      ? (getDb().prepare(`SELECT * FROM users WHERE token=?`).get(tokenParam) as UserRow | undefined)
+      : req.user!;
   if (!user) return bad(res, 'token 无效', 404);
   const fallback = `${req.protocol}://${req.get('host')}`;
   const baseUrl = base || getSetting('public_base_url') || fallback;

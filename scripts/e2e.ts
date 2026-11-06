@@ -186,7 +186,10 @@ async function main() {
 
   const backup = await fetch(`${BASE}/api/backup`, { method: 'POST', headers: { cookie } });
   const backupText = await backup.text();
-  check('备份脱敏', backup.ok && backupText.includes('<redacted>'));
+  check('备份脱敏（POST）', backup.ok && backupText.includes('<redacted>'));
+  const backupGet = await fetch(`${BASE}/api/backup`, { method: 'GET', headers: { cookie } });
+  const backupGetText = await backupGet.text();
+  check('备份脱敏（GET 下载兼容）', backupGet.ok && backupGetText.includes('<redacted>'));
 
   /* ---- 统计/日志 ---- */
   const stats = await call('/api/stats');
@@ -223,6 +226,31 @@ async function main() {
     body: { title: '全新的题目X', type: 'single', options: 'A.甲\nB.乙', use_cache: false },
   });
   check('测试台仅 AI 模式', debugAi.json.data.hit === 'ai', JSON.stringify(debugAi.json).slice(0, 200));
+
+  /* ---- 普通用户权限边界（方案 A：只读 + 自助接入） ---- */
+  const adminCookie = cookie;
+  const userLogin = await call('/api/auth/login', { method: 'POST', body: { username: uname, password: 'pass123456' } });
+  check('普通用户登录', userLogin.json.code === 1 && userLogin.json.data.user.role === 'user');
+  const userReadQs = await call('/api/questions?page=1&page_size=5');
+  check('普通用户可只读浏览题库', userReadQs.json.code === 1);
+  const userWriteQ = await call('/api/questions', {
+    method: 'POST',
+    body: { title: '越权录入', type: 'single', options: 'A.1\nB.2', answer: '1', answer_letter: 'A' },
+  });
+  check('普通用户禁止写入题库 → 403', userWriteQ.status === 403);
+  const userDelQ = await call(`/api/questions/${qid}`, { method: 'DELETE' });
+  check('普通用户禁止删除题库 → 403', userDelQ.status === 403);
+  const userProv = await call('/api/providers');
+  check('普通用户禁止读取 AI 提供商 → 403', userProv.status === 403);
+  const userLogs = await call('/api/logs?user_id=1');
+  check(
+    '普通用户日志仅限本人',
+    userLogs.json.code === 1 && userLogs.json.data.logs.every((l: any) => l.user_id === uid),
+  );
+  const userWz = await call('/api/wizard?token=fake_other_token');
+  check('普通用户向导仅返回自身 Token', userWz.json.code === 1 && userWz.json.data.token === newToken);
+  await call('/api/auth/logout', { method: 'POST' });
+  cookie = adminCookie;
 
   /* ---- 改密 & 登出 ---- */
   const chpw = await call('/api/auth/password', { method: 'POST', body: { old_password: PASS, new_password: PASS } });

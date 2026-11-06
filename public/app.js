@@ -245,10 +245,11 @@ $('#refresh-btn').addEventListener('click', () => navigate(state.page));
 
 async function loadCommon() {
   try {
+    const isAdmin = state.user?.role === 'admin';
     const [stats, settingsData, providers] = await Promise.all([
       api('/stats'),
       api('/settings'),
-      api('/providers'),
+      isAdmin ? api('/providers') : Promise.resolve({ providers: [] }),
     ]);
     state.stats = stats;
     state.settings = settingsData.settings;
@@ -673,6 +674,7 @@ async function renderPrompts() {
 const qState = { page: 1, pageSize: 20, keyword: '', type: '', source: '' };
 
 async function renderQuestions() {
+  const isAdmin = state.user?.role === 'admin';
   const params = new URLSearchParams({
     page: String(qState.page),
     page_size: String(qState.pageSize),
@@ -702,8 +704,8 @@ async function renderQuestions() {
         </select>
         <button class="btn small" id="q-search">搜索</button>
         <span class="spacer"></span>
-        <button class="btn small" id="q-add">+ 新增</button>
-        <button class="btn small" id="q-import">导入</button>
+        <button class="btn small ${isAdmin ? '' : 'hidden'}" id="q-add">+ 新增</button>
+        <button class="btn small ${isAdmin ? '' : 'hidden'}" id="q-import">导入</button>
         <button class="btn small" id="q-export-json">导出 JSON</button>
         <button class="btn small" id="q-export-csv">导出 CSV</button>
       </div>
@@ -712,14 +714,14 @@ async function renderQuestions() {
         <table>
           <thead>
             <tr>
-              <th style="width:36px"><input type="checkbox" id="q-all" style="width:auto" /></th>
+              <th style="width:36px" class="${isAdmin ? '' : 'hidden'}"><input type="checkbox" id="q-all" style="width:auto" /></th>
               <th>题目</th>
               <th style="width:70px">题型</th>
               <th style="width:180px">答案</th>
               <th style="width:60px">命中</th>
               <th style="width:90px">来源</th>
               <th style="width:140px">更新时间</th>
-              <th style="width:120px"></th>
+              <th style="width:120px" class="${isAdmin ? '' : 'hidden'}"></th>
             </tr>
           </thead>
           <tbody>
@@ -729,7 +731,7 @@ async function renderQuestions() {
                     .map(
                       (q) => `
               <tr>
-                <td><input type="checkbox" class="q-check" value="${q.id}" style="width:auto" /></td>
+                <td class="${isAdmin ? '' : 'hidden'}"><input type="checkbox" class="q-check" value="${q.id}" style="width:auto" /></td>
                 <td title="${esc(q.title)}">${esc(q.title.length > 80 ? q.title.slice(0, 80) + '…' : q.title)}</td>
                 <td><span class="badge gray">${TYPE_LABELS[q.type] || q.type}</span></td>
                 <td>
@@ -739,7 +741,7 @@ async function renderQuestions() {
                 <td>${q.hits}</td>
                 <td><span class="badge ${q.source === 'ai' ? '' : 'gray'}">${q.source === 'ai' ? 'AI' : q.source === 'manual' ? '手动' : '导入'}</span></td>
                 <td class="small muted">${fmtTime(q.updated_at)}</td>
-                <td class="actions">
+                <td class="actions ${isAdmin ? '' : 'hidden'}">
                   <button class="btn small" data-qedit="${q.id}">编辑</button>
                   <button class="btn small danger" data-qdel="${q.id}">删除</button>
                 </td>
@@ -756,7 +758,7 @@ async function renderQuestions() {
         <span>共 ${data.total} 条 · 第 ${data.page}/${totalPages} 页</span>
         <button class="btn small" id="q-prev" ${data.page <= 1 ? 'disabled' : ''}>上一页</button>
         <button class="btn small" id="q-next" ${data.page >= totalPages ? 'disabled' : ''}>下一页</button>
-        <button class="btn small danger" id="q-del-selected">删除所选</button>
+        <button class="btn small danger ${isAdmin ? '' : 'hidden'}" id="q-del-selected">删除所选</button>
       </div>
     </div>
   `;
@@ -978,7 +980,7 @@ async function renderLogs() {
           <option value="">全部命中类型</option>
           ${Object.entries(HIT_LABEL).map(([k, v]) => `<option value="${k}" ${logState.hit === k ? 'selected' : ''}>${v}</option>`).join('')}
         </select>
-        <select id="lg-user">
+        <select id="lg-user" class="${state.user.role === 'admin' ? '' : 'hidden'}">
           <option value="">全部用户</option>
           ${usersData.users.map((u) => `<option value="${u.id}" ${logState.userId === u.id ? 'selected' : ''}>${esc(u.username)}</option>`).join('')}
         </select>
