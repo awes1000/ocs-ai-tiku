@@ -537,7 +537,7 @@ async function renderProviders() {
         b.disabled = true;
         b.textContent = '测试中…';
         try {
-          const r = await api(`/providers/test?id=${p.id}`, { method: 'POST' });
+          const r = await api(`/providers/test?id=${p.id}`, { method: 'POST', body: readProviderForm() });
           toast(r.ok ? `连接成功 · ${r.latencyMs}ms（${r.model}）` : `失败：${r.message}`, r.ok ? 'ok' : 'err');
         } catch (err) {
           toast(err.message, 'err');
@@ -1404,6 +1404,9 @@ async function renderSettings() {
         <label class="field"><span>每分钟请求上限（0 = 不限）</span>
           <input id="st-rate" type="number" min="0" value="${esc(s.rate_limit_per_min)}" />
         </label>
+        <label class="field"><span>日志保留天数（0 = 永久）</span>
+          <input id="st-retention" type="number" min="0" value="${esc(s.log_retention_days ?? 30)}" />
+        </label>
       </div>
       <div class="field-row">
         <label class="field"><span>题库缓存</span>
@@ -1456,6 +1459,7 @@ async function renderSettings() {
           settings: {
             fuzzy_threshold: $('#st-fuzzy').value,
             rate_limit_per_min: $('#st-rate').value,
+            log_retention_days: $('#st-retention').value,
             enable_cache: $('#st-cache').value,
             enable_fuzzy: $('#st-fuzzymode').value,
             enable_ai: $('#st-ai').value,

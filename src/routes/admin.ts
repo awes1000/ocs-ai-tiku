@@ -485,26 +485,41 @@ router.get('/stats', requireAuth, (req, res) => {
   ).a;
   const users = (db.prepare(`SELECT COUNT(*) AS c FROM users`).get() as { c: number }).c;
 
-  // 近 24h 按小时分布
+  // 近 24h 按小时分布（单次聚合查询）
   const hourly: { hour: string; total: number; cache: number; ai: number }[] = [];
   const baseHour = new Date();
   baseHour.setMinutes(0, 0, 0);
-  for (let i = 23; i >= 0; i--) {
-    const start = Math.floor(baseHour.getTime() / 1000) - i * 3600;
-    const end = start + 3600;
-    const row = db
-      .prepare(
-        `SELECT COUNT(*) AS total,
-                SUM(CASE WHEN hit IN ('cache','fuzzy') THEN 1 ELSE 0 END) AS cache,
-                SUM(CASE WHEN hit='ai' THEN 1 ELSE 0 END) AS ai
-         FROM requests WHERE created_at >= ? AND created_at < ?`,
-      )
-      .get(start, end) as { total: number; cache: number | null; ai: number | null };
+  const baseSec = Math.floor(baseHour.getTime() / 1000);
+  const windowStart = baseSec - 23 * 3600;
+  const windowEnd = baseSec + 3600;
+  const bucketRows = db
+    .prepare(
+      `SELECT CAST((created_at - ?) / 3600 AS INTEGER) AS bucket,
+              COUNT(*) AS total,
+              SUM(CASE WHEN hit IN ('cache','fuzzy') THEN 1 ELSE 0 END) AS cache,
+              SUM(CASE WHEN hit='ai' THEN 1 ELSE 0 END) AS ai
+       FROM requests
+       WHERE created_at >= ? AND created_at < ?
+       GROUP BY bucket`,
+    )
+    .all(windowStart, windowStart, windowEnd) as {
+    bucket: number;
+    total: number;
+    cache: number | null;
+    ai: number | null;
+  }[];
+  const bucketMap = new Map<number, { total: number; cache: number; ai: number }>();
+  for (const r of bucketRows) {
+    bucketMap.set(r.bucket, { total: r.total ?? 0, cache: r.cache ?? 0, ai: r.ai ?? 0 });
+  }
+  for (let idx = 0; idx < 24; idx++) {
+    const start = windowStart + idx * 3600;
+    const b = bucketMap.get(idx);
     hourly.push({
       hour: new Date(start * 1000).toISOString().slice(11, 16),
-      total: row.total ?? 0,
-      cache: row.cache ?? 0,
-      ai: row.ai ?? 0,
+      total: b?.total ?? 0,
+      cache: b?.cache ?? 0,
+      ai: b?.ai ?? 0,
     });
   }
 
@@ -717,23 +732,39 @@ router.delete('/providers/:id', requireAuth, requireAdmin, (req, res) => {
   ok(res);
 });
 
-/** 测试连接：不传 id 时测试请求体里的配置（允许未保存直接试） */
+/** 测试连接：支持传 id、传未保存表单，或在编辑态合并 id 与表单修改 */
 router.post('/providers/test', requireAuth, requireAdmin, async (req, res) => {
-  let config;
-  const id = Number.parseInt(String(req.query.id ?? req.body?.id ?? ''), 10);
-  if (Number.isFinite(id)) {
-    const row = getDb().prepare(`SELECT * FROM providers WHERE id=?`).get(id) as ProviderRow | undefined;
-    if (!row) return bad(res, '提供商不存在', 404);
-    config = rowToConfig(row);
-  } else if (req.body?.base_url && req.body?.model) {
-    const p = providerPayload(req.body);
-    config = rowToConfig({ ...(p as any), id: 0, created_at: 0, updated_at: 0 } as ProviderRow);
-  } else {
-    config = primaryAiConfig();
-    if (!config) return bad(res, '尚未配置任何 AI 提供商');
+  try {
+    let config;
+    const id = Number.parseInt(String(req.query.id ?? req.body?.id ?? ''), 10);
+    if (Number.isFinite(id)) {
+      const row = getDb().prepare(`SELECT * FROM providers WHERE id=?`).get(id) as ProviderRow | undefined;
+      if (!row) return bad(res, '提供商不存在', 404);
+      const hasBodyOverrides =
+        req.body &&
+        typeof req.body === 'object' &&
+        (req.body.base_url !== undefined ||
+          req.body.model !== undefined ||
+          req.body.api_key !== undefined ||
+          req.body.api_type !== undefined);
+      if (hasBodyOverrides) {
+        const p = providerPayload(req.body, row);
+        config = rowToConfig({ ...row, ...p });
+      } else {
+        config = rowToConfig(row);
+      }
+    } else if (req.body?.base_url && req.body?.model) {
+      const p = providerPayload(req.body);
+      config = rowToConfig({ ...(p as any), id: 0, created_at: 0, updated_at: 0 } as ProviderRow);
+    } else {
+      config = primaryAiConfig();
+      if (!config) return bad(res, '尚未配置任何 AI 提供商');
+    }
+    const result = await testConnection(config);
+    ok(res, result);
+  } catch (err) {
+    bad(res, errMsg(err));
   }
-  const result = await testConnection(config);
-  ok(res, result);
 });
 
 /* ============================ 在线测试台 ============================ */
@@ -806,7 +837,7 @@ router.get('/wizard', requireAuth, (req, res) => {
 
 /* ============================ 数据库备份 ============================ */
 
-router.post('/backup', requireAuth, requireAdmin, (_req, res) => {
+function handleBackup(_req: any, res: any): void {
   const db = getDb();
   try {
     const tables = ['users', 'questions', 'requests', 'settings', 'providers'];
@@ -829,6 +860,9 @@ router.post('/backup', requireAuth, requireAdmin, (_req, res) => {
   } catch (err) {
     bad(res, errMsg(err), 500);
   }
-});
+}
+
+router.get('/backup', requireAuth, requireAdmin, handleBackup);
+router.post('/backup', requireAuth, requireAdmin, handleBackup);
 
 export default router;

@@ -25,12 +25,26 @@ export interface Candidate {
   score: number;
 }
 
-export function bestMatch(target: string, candidates: { id: number; title: string; title_norm: string; type: string; options: string; answer: string; answer_letter: string }[]): Candidate | null {
+export function bestMatch(
+  target: string,
+  candidates: { id: number; title: string; title_norm: string; type: string; options: string; answer: string; answer_letter: string }[],
+  minScore = 0,
+): Candidate | null {
   const norm = normalizeTitle(target);
   if (!norm) return null;
   let best: Candidate | null = null;
+  const l1 = norm.length;
   for (const q of candidates) {
-    const score = q.title_norm === norm ? 1 : ss.compareTwoStrings(norm, q.title_norm || normalizeTitle(q.title));
+    const candNorm = q.title_norm || normalizeTitle(q.title);
+    if (!candNorm) continue;
+    if (candNorm === norm) return { question: q, score: 1 };
+    const l2 = candNorm.length;
+    const cutoff = best ? Math.max(minScore, best.score) : minScore;
+    if (cutoff > 0 && l1 >= 2 && l2 >= 2) {
+      const maxDice = (2 * Math.min(l1 - 1, l2 - 1)) / (l1 + l2 - 2);
+      if (maxDice < cutoff) continue;
+    }
+    const score = ss.compareTwoStrings(norm, candNorm);
     if (!best || score > best.score) best = { question: q, score };
   }
   return best;

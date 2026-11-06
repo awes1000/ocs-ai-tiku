@@ -147,21 +147,15 @@ function listByNorm(norm: string, type: string): QuestionRow[] {
     .all(norm, type) as QuestionRow[];
 }
 
-/** 模糊候选集：按首字符/长度粗筛，避免全表扫描过大 */
-function fuzzyCandidates(norm: string, type: string, limit = 3000): QuestionRow[] {
-  const db = getDb();
-  const prefix = norm.slice(0, 1);
-  const rows = db
+/** 模糊候选集：利用 (type, hits DESC, updated_at DESC) 索引取候选，避免首字符 LIKE 截断导致漏检 */
+function fuzzyCandidates(type: string, limit = 3000): QuestionRow[] {
+  return getDb()
     .prepare(
       `SELECT * FROM questions
-       WHERE type=? AND title_norm LIKE ? 
+       WHERE type=?
        ORDER BY hits DESC, updated_at DESC LIMIT ?`,
     )
-    .all(type, `${prefix}%`, limit) as QuestionRow[];
-  if (rows.length > 0) return rows;
-  return db
-    .prepare(`SELECT * FROM questions WHERE type=? ORDER BY hits DESC, updated_at DESC LIMIT ?`)
-    .all(type, Math.min(limit, 1000)) as QuestionRow[];
+    .all(type, limit) as QuestionRow[];
 }
 
 function toResolved(type: QuestionType, parsed: ParsedLlmAnswer): ResolvedAnswer {
@@ -248,6 +242,24 @@ function bumpHits(id: number): void {
   getDb().prepare(`UPDATE questions SET hits=hits+1, updated_at=? WHERE id=?`).run(nowSec(), id);
 }
 
+let lastPruneAt = 0;
+let writesSincePrune = 0;
+
+function maybePruneLogsAndSessions(): void {
+  writesSincePrune++;
+  const now = nowSec();
+  if (writesSincePrune < 100 && now - lastPruneAt < 600) return;
+  writesSincePrune = 0;
+  lastPruneAt = now;
+  const db = getDb();
+  const retentionDays = settingNumber('log_retention_days');
+  if (retentionDays > 0) {
+    const cutoff = now - Math.round(retentionDays * 86400);
+    db.prepare(`DELETE FROM requests WHERE created_at < ?`).run(cutoff);
+  }
+  db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(now);
+}
+
 /** 记录请求日志 */
 export function logRequest(params: {
   userId: number | null;
@@ -277,6 +289,7 @@ export function logRequest(params: {
       params.questionId ?? null,
       nowSec(),
     );
+  maybePruneLogsAndSessions();
 }
 
 /* ------------------------------------------------------------------ */
@@ -375,8 +388,8 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
   // 2) 模糊命中
   if (enableCache && enableFuzzy) {
     const threshold = settingNumber('fuzzy_threshold');
-    const candidates = fuzzyCandidates(norm, effectiveType);
-    const match = bestMatch(title, candidates);
+    const candidates = fuzzyCandidates(effectiveType);
+    const match = bestMatch(title, candidates, threshold);
     if (match && match.score >= threshold) {
       const row = match.question as QuestionRow;
       const storedOptions = splitOptions(row.options);

@@ -12,7 +12,15 @@ const buckets = new Map<string, number[]>();
 function rateLimited(key: string, limitPerMin: number): boolean {
   if (!limitPerMin || limitPerMin <= 0) return false;
   const now = Date.now();
-  const arr = (buckets.get(key) ?? []).filter((t) => now - t < 60_000);
+  if (buckets.size > 2000) {
+    for (const [k, ts] of buckets) {
+      const valid = ts.filter((t) => now - t < 60_000);
+      if (valid.length === 0) buckets.delete(k);
+      else buckets.set(k, valid);
+    }
+  }
+  const prev = buckets.get(key);
+  const arr = prev ? prev.filter((t) => now - t < 60_000) : [];
   if (arr.length >= limitPerMin) {
     buckets.set(key, arr);
     return true;
@@ -103,7 +111,6 @@ async function handle(req: any, res: any, aiOnly: boolean): Promise<void> {
   });
 }
 
-let logCount = 0;
 router.get('/search', apiAuth, (req, res) => void handle(req, res, false).catch((e) => res.status(500).json({ code: 0, msg: errMsg(e) })));
 router.post('/search', apiAuth, (req, res) => void handle(req, res, false).catch((e) => res.status(500).json({ code: 0, msg: errMsg(e) })));
 
