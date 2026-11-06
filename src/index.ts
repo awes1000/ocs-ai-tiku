@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import type { Server } from 'node:http';
 import { env } from './env';
-import { ensureAdmin, getDb } from './db';
+import { closeDb, ensureAdmin, getDb } from './db';
 import searchRouter from './routes/search';
 import adminRouter, { buildAnswererWrapper } from './routes/admin';
 import { PING_PROMPT } from './services/prompt';
@@ -11,7 +11,14 @@ import { errMsg } from './utils';
 const app = express();
 
 app.disable('x-powered-by');
-app.set('trust proxy', true);
+const trustProxyVal = env.TRUST_PROXY.trim().toLowerCase();
+if (trustProxyVal === 'true' || trustProxyVal === '1') {
+  app.set('trust proxy', true);
+} else if (trustProxyVal === 'false' || trustProxyVal === '0') {
+  app.set('trust proxy', false);
+} else {
+  app.set('trust proxy', env.TRUST_PROXY);
+}
 
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ extended: true, limit: '8mb' }));
@@ -84,6 +91,24 @@ function start(): Server {
   return server;
 }
 
-if (require.main === module) start();
+if (require.main === module) {
+  const server = start();
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n收到 ${signal}，正在安全关闭服务与数据库…`);
+    server.close(() => {
+      closeDb();
+      process.exit(0);
+    });
+    setTimeout(() => {
+      closeDb();
+      process.exit(0);
+    }, 5000).unref();
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
 
-export { app, start, PING_PROMPT, buildAnswererWrapper };
+export { app, start, closeDb, PING_PROMPT, buildAnswererWrapper };

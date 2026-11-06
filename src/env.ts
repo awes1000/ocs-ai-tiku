@@ -26,6 +26,7 @@ export const env = {
   PORT: int('PORT', 8060),
   HOST: str('HOST', '0.0.0.0'),
   DB_PATH: str('DB_PATH', 'data/tiku.db'),
+  TRUST_PROXY: str('TRUST_PROXY', 'loopback, linklocal, uniquelocal'),
   ADMIN_USERNAME: str('ADMIN_USERNAME', 'admin'),
   ADMIN_PASSWORD: str('ADMIN_PASSWORD', ''),
   AI_BASE_URL: str('AI_BASE_URL', ''),

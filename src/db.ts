@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS questions (
 );
 CREATE INDEX IF NOT EXISTS idx_questions_norm ON questions(title_norm, type);
 CREATE INDEX IF NOT EXISTS idx_questions_updated ON questions(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_questions_type_hits ON questions(type, hits DESC, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS requests (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,13 +104,30 @@ export function getDb(): DB {
   return db;
 }
 
-/** 轻量迁移：补齐后续版本新增的列 */
+/** 轻量迁移：补齐后续版本新增的列与索引 */
 function migrate(d: DB): void {
   addColumnIfMissing(d, 'users', 'note', "TEXT DEFAULT ''");
   addColumnIfMissing(d, 'users', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(d, 'requests', 'status', "TEXT NOT NULL DEFAULT 'ok'");
   addColumnIfMissing(d, 'requests', 'message', "TEXT DEFAULT ''");
   addColumnIfMissing(d, 'requests', 'question_id', 'INTEGER');
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_questions_type_hits ON questions(type, hits DESC, updated_at DESC)`);
+}
+
+/** 优雅关闭数据库连接（含 WAL checkpoint） */
+export function closeDb(): void {
+  if (!db) return;
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    /* ignore */
+  }
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
+  db = null;
 }
 
 function addColumnIfMissing(d: DB, table: string, column: string, ddl: string): void {
