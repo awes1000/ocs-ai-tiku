@@ -60,6 +60,9 @@ npm start
 | `title` | 题目文本（必填） |
 | `type` | `single` / `multiple` / `judgement` / `completion` / `unknown` |
 | `options` | 选项，`\n` 分隔（填空题留空） |
+| `suggestion_title` | 图片题优化：题干（图片地址被替换成 `[图片1]` 占位） |
+| `suggestion_options` | 图片题优化：选项（同上） |
+| `images` | 图片题优化：图片数组（OCS 传 base64 data URL，也接受 http(s) 地址） |
 | `token` | 用户搜题 Token，也可用 `Authorization: Bearer <token>` |
 
 成功响应：
@@ -77,7 +80,8 @@ npm start
       ["中国梦是什么？", "B", { "ai": true }]
     ],
     "latency_ms": 1820,
-    "model": "gpt-4o-mini"
+    "model": "gpt-4o-mini",
+    "images": 2                       // 仅图片题：本次带了几张图（图片题不缓存）
   }
 }
 ```
@@ -101,6 +105,23 @@ npm start
 - `POST /search/ai` — 同 `/search` 但强制走 AI（不入缓存），WebGUI 测试台用
 - `GET /health` — 健康检查
 
+### 图片题 / 公式题（OCS「图片题优化」）
+
+OCS 开启「图片题优化」后，会把题干/选项里的图片转成 base64，并把题干中的图片地址替换成
+`[图片1]`、`[图片2]` 这样的占位，额外提交三个字段：`images` / `suggestion_title` / `suggestion_options`
+（见 [OCS API 文档](https://docs.ocsjs.com/docs/other/api)）。
+
+本后端的处理：
+
+1. `images` 走多模态消息直接发给模型（`chat_completions` 用 `image_url`，`responses` 用 `input_image`）；
+2. 题干/选项优先用 `suggestion_title` / `suggestion_options`（带 `[图片N]` 占位），提示词会附加「先读图再作答」；
+3. 最多取 8 张图、单张 ≤ 3M 字符、总量 ≤ 6M 字符；`undefined` / 非图片地址自动丢弃；
+4. **图片题跳过题库缓存，答案也不入库**（同题干不同图会互相污染）；
+5. 模型/网关不支持多模态时，自动降级为纯文本再试一次（此时模型只能看到 `[图片N]` 占位）。
+
+> 「接入向导」生成的配置已声明这三个字段（`handler` 形式，无图时回退为空/原值），
+> 所以 OCS 不会再提示「当前题库配置暂不支持图片、公式等题目处理」。
+
 ---
 
 ## 二、OCS 接入
@@ -120,7 +141,10 @@ npm start
       "title": "${title}",
       "type": "${type}",
       "options": "${options}",
-      "token": "你的搜题Token"
+      "token": "你的搜题Token",
+      "suggestion_title": { "handler": "return (env) => env.suggestion_title || env.title" },
+      "suggestion_options": { "handler": "return (env) => env.suggestion_options !== undefined ? env.suggestion_options : env.options" },
+      "images": { "handler": "return (env) => env.images || []" }
     },
     "handler": "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg) || '未找到答案', undefined]; }"
   }
@@ -141,6 +165,10 @@ npm start
 3. OCS 默认题库超时 60s（脚本设置里可调到 180s），后端 AI 调用默认 35s 超时 + 1 次重试，
    整体压在默认超时内；网络较慢时建议把脚本超时调到 **90s 以上**。
 4. 脚本与后端不在同一台机器时，把「服务地址」改成脚本能访问的地址（局域网 IP / 公网域名）。
+5. `data` 里的 `suggestion_title` / `suggestion_options` / `images` 用 `handler` 形式：
+   OCS 开启「图片题优化」时会把图片 base64 与 `[图片N]` 占位的题干一并提交；
+   未开启时这些 handler 分别回退为 `env.title` / `env.options` / `[]`，不会把 `undefined` 当字符串发出去。
+   只要配置里有这三个字段，OCS 就不会再提示「当前题库配置暂不支持图片、公式等题目处理」。
 
 ---
 
@@ -153,7 +181,9 @@ npm start
 3. **AI 答题**：按题型套用提示词，要求模型严格输出 JSON：
    - single → `{"answer":"B"}`、multiple → `{"answer":"ABD"}`、judgement → `{"answer":"对"}`
    - completion → `{"answer":["空1","空2"]}`、unknown → `{"answer":"答案文本"}`
+   - 图片题（OCS 图片优化）→ 图片作为多模态 part 一起发给模型，提示词里 `[图片N]` 与图片顺序一一对应
 4. 服务端把字母映射回选项原文，返回「文本 + 字母」两条结果，同时把题目/选项/答案/模型/命中数入库。
+   **图片题不入库、也不读缓存**（答案依赖具体图片）。
 5. **并发合并**：同一道题的并发请求共享一次 AI 调用，不会重复烧 token。
 6. **故障切换**：多套 AI 提供商按优先级依次尝试，401/403/404 自动换下一个。
 

@@ -73,6 +73,8 @@ export function buildUserPrompt(opts: {
   title: string;
   options: string[];
   extraInstruction?: string;
+  /** 是否随请求附带了图片（图片题的题干里会用 [图片N] 占位） */
+  hasImages?: boolean;
 }): string {
   const { type, title, options } = opts;
   const optionsBlock = options.length
@@ -84,7 +86,11 @@ export function buildUserPrompt(opts: {
     .replace(/\{\{\s*options_block\s*\}\}/gu, optionsBlock)
     .replace(/\{\{\s*options\s*\}\}/gu, options.join('\n'))
     .replace(/\{\{\s*type\s*\}\}/gu, type);
-  return opts.extraInstruction ? `${rendered}\n\n补充要求：${opts.extraInstruction}` : rendered;
+  const imageHint = opts.hasImages
+    ? '题干与选项中的 [图片1]、[图片2] 等占位对应随本次请求附带的图片，请先读图（公式、图表、选项截图）再作答。'
+    : '';
+  const extra = [imageHint, opts.extraInstruction].filter(Boolean).join('\n');
+  return extra ? `${rendered}\n\n补充要求：${extra}` : rendered;
 }
 
 /** 测试连接用的最小提示词 */

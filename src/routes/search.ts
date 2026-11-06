@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { apiAuth } from '../middleware/auth';
-import { logRequest, resolve, resolveWithAiOnly, type ResolveOutput } from '../services/resolver';
+import { logRequest, normalizeImages, resolve, resolveWithAiOnly, type ResolveOutput } from '../services/resolver';
 import { errMsg } from '../utils';
 import { settingNumber } from '../config';
 
@@ -30,7 +30,16 @@ function rateLimited(key: string, limitPerMin: number): boolean {
   return false;
 }
 
-function params(req: any): { title: string; type: string; options: string } {
+interface SearchParams {
+  title: string;
+  type: string;
+  options: string;
+  suggestionTitle: string;
+  suggestionOptions: string;
+  images: string[];
+}
+
+function params(req: any): SearchParams {
   const src = req.method === 'GET' ? req.query : { ...req.query, ...(req.body || {}) };
   const read = (v: unknown): string => {
     if (Array.isArray(v)) return String(v[0] ?? '');
@@ -42,6 +51,10 @@ function params(req: any): { title: string; type: string; options: string } {
     title: read(src.title),
     type: read(src.type) || 'single',
     options: read(src.options),
+    // OCS「图片题优化」：题干/选项里的图片被替换为 [图片N] 占位，原图放在 images 里
+    suggestionTitle: read(src.suggestion_title),
+    suggestionOptions: read(src.suggestion_options),
+    images: normalizeImages(src.images),
   };
 }
 
@@ -73,9 +86,16 @@ async function handle(req: any, res: any, aiOnly: boolean): Promise<void> {
 
   let out: ResolveOutput;
   try {
-    out = await (aiOnly
-      ? resolveWithAiOnly({ title: p.title, type: p.type, options: p.options, userId })
-      : resolve({ title: p.title, type: p.type, options: p.options, userId }));
+    const input = {
+      title: p.title,
+      type: p.type,
+      options: p.options,
+      suggestionTitle: p.suggestionTitle,
+      suggestionOptions: p.suggestionOptions,
+      images: p.images,
+      userId,
+    };
+    out = await (aiOnly ? resolveWithAiOnly(input) : resolve(input));
   } catch (err) {
     out = { code: 0, msg: errMsg(err), hit: 'none', results: [], tokens: 0, latencyMs: 0 };
   }
@@ -107,6 +127,7 @@ async function handle(req: any, res: any, aiOnly: boolean): Promise<void> {
       results: out.results,
       latency_ms: out.latencyMs,
       ...(out.model ? { model: out.model } : {}),
+      ...(out.images ? { images: out.images } : {}),
     },
   });
 }

@@ -15,6 +15,7 @@ const results: { name: string; ok: boolean; detail?: string }[] = [];
 const check = (name: string, ok: boolean, detail = '') => results.push({ name, ok, detail });
 
 let cookie = '';
+let lastLlmRequest: { prompt: string; imageCount: number } | null = null;
 
 async function call(path: string, opts: { method?: string; body?: unknown } = {}) {
   const init: RequestInit = {
@@ -44,7 +45,15 @@ const llm = http.createServer((req, res) => {
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     const parsed = JSON.parse(body || '{}');
-    const prompt: string = parsed.messages?.[1]?.content ?? '';
+    const content = parsed.messages?.[1]?.content;
+    const prompt: string =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content.filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('\n')
+          : '';
+    const imageCount = Array.isArray(content) ? content.filter((c: any) => c?.type === 'image_url').length : 0;
+    lastLlmRequest = { prompt, imageCount };
     let answer: unknown = 'B';
     if (prompt.includes('多选题')) answer = 'AB';
     else if (prompt.includes('判断题')) answer = '对';
@@ -149,6 +158,31 @@ async function main() {
   const s2 = await call(`/search?token=${encodeURIComponent(newToken)}&title=${encodeURIComponent('1+1=?')}&type=single&options=${encodeURIComponent('A.1\nB.2\nC.3')}`);
   check('重复搜题命中缓存', s2.json.data?.hit === 'cache', JSON.stringify(s2.json).slice(0, 200));
 
+  /* ---- 图片题（OCS 图片优化） ---- */
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  const imgBody = {
+    title: '图片题A：[图片1]',
+    type: 'single',
+    options: 'A.[图片1]\nB.略',
+    suggestion_title: '图片题A：[图片1]',
+    suggestion_options: 'A.[图片1]\nB.略',
+    images: [PNG],
+    token: newToken,
+  };
+  const imgSearch = await call('/search', { method: 'POST', body: imgBody });
+  check('图片题走 AI', imgSearch.json.code === 1 && imgSearch.json.data?.hit === 'ai', JSON.stringify(imgSearch.json).slice(0, 250));
+  check('图片以多模态 part 发送', lastLlmRequest?.imageCount === 1, JSON.stringify(lastLlmRequest).slice(0, 200));
+  check('图片题提示词带 [图片1] 占位', Boolean(lastLlmRequest?.prompt.includes('[图片1]')), (lastLlmRequest?.prompt ?? '').slice(0, 200));
+  const imgSearch2 = await call('/search', { method: 'POST', body: imgBody });
+  check('图片题不复用缓存', imgSearch2.json.data?.hit === 'ai', JSON.stringify(imgSearch2.json).slice(0, 200));
+  const imgStored = await call(`/api/questions?keyword=${encodeURIComponent('图片题A')}`);
+  check('图片题不入题库', imgStored.json.data?.total === 0, JSON.stringify(imgStored.json).slice(0, 150));
+  const badImg = await call('/search', {
+    method: 'POST',
+    body: { ...imgBody, images: ['undefined', 'not-an-image'], title: '图片题B：[图片1]' },
+  });
+  check('非法 images 被过滤', badImg.json.code === 1 && badImg.json.data?.hit === 'ai' && !badImg.json.data?.images, JSON.stringify(badImg.json).slice(0, 200));
+
   /* ---- 题库管理 ---- */
   const qs = await call('/api/questions?page=1&page_size=10');
   check('题库列表', qs.json.code === 1 && qs.json.data.total >= 1, JSON.stringify(qs.json).slice(0, 150));
@@ -209,6 +243,33 @@ async function main() {
   const wrapper = wrapperList[0] ?? {};
   check('向导生成 wrapper', wrapper.type === 'GM_xmlhttpRequest' && wrapper.url === `${BASE}/search`, JSON.stringify(wrapper).slice(0, 200));
   check('向导 data 使用占位符', wrapper.data.title === '${title}' && wrapper.data.token === newToken);
+  check('向导声明图片题支持（OCS 不再提示“暂不支持图片、公式”）', (() => {
+    if (String(wrapper.method || 'get').toLowerCase() !== 'post') return false;
+    const placeholders = ['${images}', '${suggestion_title}', '${suggestion_options}'];
+    return Object.values(wrapper.data || {}).some((v: any) => {
+      if (typeof v === 'string') return placeholders.some((p) => v.includes(p));
+      return Boolean(
+        v &&
+          typeof v === 'object' &&
+          typeof v.handler === 'string' &&
+          /(^|[^\w$])(images|suggestion_title|suggestion_options)(?![\w$])/.test(v.handler),
+      );
+    });
+  })());
+  check(
+    '向导图片字段在无图时为空',
+    (() => {
+      try {
+        const images = new Function(wrapper.data.images.handler)()({});
+        const title = new Function(wrapper.data.suggestion_title.handler)()({ title: 'T' });
+        const opts = new Function(wrapper.data.suggestion_options.handler)()({ options: 'A\nB' });
+        return Array.isArray(images) && images.length === 0 && title === 'T' && opts === 'A\nB';
+      } catch (e) {
+        check('向导图片字段在无图时为空', false, String(e));
+        return false;
+      }
+    })(),
+  );
   check('向导 handler 可用', (() => {
     try {
       // 模拟 OCS 的 new Function 执行

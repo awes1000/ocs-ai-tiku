@@ -22,7 +22,7 @@ import { testConnection } from '../services/llm';
 import { normalizeTitle, normalizeType, splitOptions } from '../services/similarity';
 import { upsertQuestion } from '../services/resolver';
 import { getTemplate, defaultTemplate, getAllTemplates, ANSWER_SHAPES } from '../services/prompt';
-import { resolve, resolveWithAiOnly } from '../services/resolver';
+import { resolve, resolveWithAiOnly, normalizeImages } from '../services/resolver';
 import { errMsg, hashPassword, nowSec, randomToken, verifyPassword } from '../utils';
 
 const router = Router();
@@ -777,13 +777,17 @@ router.post('/debug/solve', requireAuth, async (req, res) => {
   const title = String(req.body?.title ?? '').trim();
   const type = normalizeType(req.body?.type);
   const options = String(req.body?.options ?? '');
+  const suggestionTitle = String(req.body?.suggestion_title ?? '').trim();
+  const suggestionOptions = String(req.body?.suggestion_options ?? '');
+  const images = normalizeImages(req.body?.images);
   if (!title) return bad(res, '请输入题目');
 
+  const input = { title, type, options, suggestionTitle, suggestionOptions, images, userId: req.user!.id };
   if (useCache) {
-    const out = await resolve({ title, type, options, userId: req.user!.id });
+    const out = await resolve(input);
     return ok(res, out);
   }
-  const out = await resolveWithAiOnly({ title, type, options, userId: req.user!.id });
+  const out = await resolveWithAiOnly(input);
   ok(res, out);
 });
 
@@ -797,7 +801,7 @@ export interface AnswererWrapper {
   url: string;
   contentType: 'json';
   headers: Record<string, string>;
-  data: Record<string, string>;
+  data: Record<string, string | { handler: string }>;
   handler: string;
 }
 
@@ -829,6 +833,13 @@ export function buildAnswererWrapper(
         type: '${type}',
         options: '${options}',
         token,
+        // 图片题优化：OCS 开启后会把图片转成 base64 并把这些字段一起提交；
+        // 用 handler 形式是为了在 OCS 未开启图片优化时不把 "undefined" 当字符串发出去。
+        suggestion_title: { handler: 'return (env) => env.suggestion_title || env.title' },
+        suggestion_options: {
+          handler: 'return (env) => env.suggestion_options !== undefined ? env.suggestion_options : env.options',
+        },
+        images: { handler: 'return (env) => env.images || []' },
       },
       handler:
         "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg && res.code !== 1 ? res.msg : '未找到答案'), undefined]; }",

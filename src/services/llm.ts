@@ -13,6 +13,8 @@ export interface LlmCallOptions {
   config: RuntimeAiConfig;
   systemPrompt: string;
   userPrompt: string;
+  /** 图片题：base64 data URL 或可公开访问的 http(s) 图片地址，走多模态消息 */
+  images?: string[];
   /** 要求模型输出 JSON 对象 */
   jsonMode?: boolean;
   /** 覆盖配置的超时 */
@@ -131,15 +133,31 @@ function errorMessage(status: number, text: string): string {
   return `HTTP ${status}: ${detail}`;
 }
 
+/** 用户消息内容：有图片时构造多模态 part 列表，否则保持纯文本 */
+function userContent(opts: LlmCallOptions): unknown {
+  const images = opts.images ?? [];
+  if (!images.length) return opts.userPrompt;
+  if (opts.config.api_type === 'responses') {
+    return [
+      { type: 'input_text', text: opts.userPrompt },
+      ...images.map((url) => ({ type: 'input_image', image_url: url })),
+    ];
+  }
+  return [
+    { type: 'text', text: opts.userPrompt },
+    ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+  ];
+}
+
 /** 根据 api_type 构造请求体 */
 function buildBody(opts: LlmCallOptions, stream: boolean): Record<string, unknown> {
-  const { config, systemPrompt, userPrompt } = opts;
+  const { config, systemPrompt } = opts;
   if (config.api_type === 'responses') {
     return {
       model: config.model,
       input: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: userContent(opts) },
       ],
       temperature: config.temperature,
       max_output_tokens: config.max_tokens,
@@ -151,7 +169,7 @@ function buildBody(opts: LlmCallOptions, stream: boolean): Record<string, unknow
     model: config.model,
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
+      { role: 'user', content: userContent(opts) },
     ],
     temperature: config.temperature,
     max_tokens: config.max_tokens,
@@ -178,8 +196,8 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmResult> {
   const url = endpointOf(config);
   const started = Date.now();
 
-  const attempt = async (jsonMode: boolean): Promise<{ text: string; tokens: number }> => {
-    const body = buildBody({ ...opts, jsonMode }, false);
+  const attempt = async (jsonMode: boolean, images?: string[]): Promise<{ text: string; tokens: number }> => {
+    const body = buildBody({ ...opts, jsonMode, images }, false);
     const res = await doFetch(url, body, config, timeoutMs, undefined, opts.signal);
     if (res.status < 200 || res.status >= 300) {
       const err: any = new Error(errorMessage(res.status, res.text));
@@ -201,16 +219,30 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmResult> {
     return parsed;
   };
 
+  /** JSON 模式不被支持时退回纯文本模式 */
+  const attemptJsonFallback = async (images?: string[]): Promise<{ text: string; tokens: number }> => {
+    try {
+      return await attempt(Boolean(opts.jsonMode), images);
+    } catch (err) {
+      const msg = errMsg(err);
+      const canRetryPlain =
+        opts.jsonMode &&
+        /response_format|json_object|json mode|400|422|unsupported|unknown field|invalid_request/iu.test(msg);
+      if (!canRetryPlain) throw err;
+      return attempt(false, images);
+    }
+  };
+
+  const hasImages = Boolean(opts.images?.length);
   let parsed: { text: string; tokens: number };
   try {
-    parsed = await attempt(Boolean(opts.jsonMode));
+    parsed = await attemptJsonFallback(hasImages ? opts.images : undefined);
   } catch (err) {
-    const msg = errMsg(err);
-    const canRetryPlain =
-      opts.jsonMode &&
-      /response_format|json_object|json mode|400|422|unsupported|unknown field|invalid_request/iu.test(msg);
-    if (!canRetryPlain) throw err;
-    parsed = await attempt(false);
+    // 部分网关/模型不支持多模态，去掉图片再试一次（题干里仍保留 [图片N] 占位）
+    const canRetryWithoutImages =
+      hasImages && /image|vision|multimodal|unsupported|invalid|400|415|422/iu.test(errMsg(err));
+    if (!canRetryWithoutImages) throw err;
+    parsed = await attemptJsonFallback(undefined);
   }
 
   return {

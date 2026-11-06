@@ -13,7 +13,7 @@ import {
   textsFromLetters,
   type QuestionType,
 } from './similarity';
-import { errMsg, nowSec } from '../utils';
+import { errMsg, nowSec, sha256 } from '../utils';
 
 /** OCS 结果项：[题目, 答案, extra_data?] */
 export type ResultItem = [string, string, Record<string, unknown>?];
@@ -25,6 +25,12 @@ export interface ResolveInput {
   type: string;
   options: string;
   userId: number | null;
+  /** OCS「图片题优化」：题干（图片地址已被替换为 [图片N] 占位） */
+  suggestionTitle?: string;
+  /** OCS「图片题优化」：选项（同上） */
+  suggestionOptions?: string;
+  /** OCS「图片题优化」：base64 data URL（png/jpeg…）或 http(s) 图片地址 */
+  images?: string[];
 }
 
 export interface ResolveOutput {
@@ -36,6 +42,51 @@ export interface ResolveOutput {
   tokens: number;
   latencyMs: number;
   model?: string;
+  /** 本次是否带了图片（图片题不做题库缓存） */
+  images?: number;
+}
+
+/** 图片题：单次请求最多带的图片数 / 单张最长字符数 / 总量长度上限（express 上限 8mb） */
+export const MAX_IMAGES = 8;
+const MAX_IMAGE_CHARS = 3_000_000;
+const MAX_IMAGES_TOTAL_CHARS = 6_000_000;
+
+/**
+ * 规范化 OCS 传来的 images：
+ * 只收 base64 data URL（OCS 默认）与 http(s) 地址，丢弃 OCS 在无图时回填的 "undefined"/空值。
+ */
+export function normalizeImages(raw: unknown): string[] {
+  let list: unknown = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text || text === 'undefined' || text === 'null') return [];
+    if (text.startsWith('[')) {
+      try {
+        list = JSON.parse(text);
+      } catch {
+        list = [text];
+      }
+    } else list = [text];
+  }
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  let total = 0;
+  for (const item of list) {
+    if (typeof item !== 'string') continue;
+    const url = item.trim();
+    if (!url || url === 'undefined') continue;
+    if (!/^data:image\/[a-z0-9.+-]+;base64,/iu.test(url) && !/^https?:\/\//iu.test(url)) continue;
+    if (url.length > MAX_IMAGE_CHARS) continue;
+    if (total + url.length > MAX_IMAGES_TOTAL_CHARS) break;
+    out.push(url);
+    total += url.length;
+    if (out.length >= MAX_IMAGES) break;
+  }
+  return out;
+}
+
+function imageKey(images: string[]): string {
+  return images.length ? sha256(images.join('\u0001')).slice(0, 16) : '';
 }
 
 /** 解析 LLM 返回的 JSON */
@@ -302,13 +353,14 @@ async function askLlm(
   title: string,
   options: string[],
   configs: RuntimeAiConfig[],
+  images: string[] = [],
 ): Promise<{ parsed: ParsedLlmAnswer; model: string; tokens: number }> {
-  const key = `${type}\u0001${normalizeTitle(title)}\u0001${options.join('\u0001')}`;
+  const key = `${type}\u0001${normalizeTitle(title)}\u0001${options.join('\u0001')}\u0001${imageKey(images)}`;
   const existing = inFlight.get(key);
   if (existing) return existing;
 
   const task = (async () => {
-    const userPrompt = buildUserPrompt({ type, title, options });
+    const userPrompt = buildUserPrompt({ type, title, options, hasImages: images.length > 0 });
     const sys = systemPrompt();
     const retry = settingBool('ai_retry') ? 1 : 0;
     let lastErr: unknown = null;
@@ -317,7 +369,7 @@ async function askLlm(
     for (const config of configs) {
       for (let attempt = 0; attempt <= retry; attempt++) {
         try {
-          const res = await callLlm({ config, systemPrompt: sys, userPrompt, jsonMode: true });
+          const res = await callLlm({ config, systemPrompt: sys, userPrompt, images, jsonMode: true });
           totalTokens += res.tokens;
           const parsed = interpretLlmAnswer(type, res.raw, options);
           if (!parsed.answer) throw new Error('模型返回了空答案');
@@ -348,6 +400,12 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
   const effectiveType: QuestionType = type === 'unknown' && options.length > 0 ? 'single' : type;
   const latency = () => Date.now() - started;
 
+  // OCS 图片题优化：题干/选项里的图片地址被替换为 [图片N]，原图随 images 一起传过来
+  const images = normalizeImages(input.images);
+  const hasImages = images.length > 0;
+  const aiTitle = String(input.suggestionTitle ?? '').trim() || title;
+  const aiOptions = input.suggestionOptions ? splitOptions(input.suggestionOptions) : options;
+
   if (!title) {
     return { code: 0, msg: '题目为空', hit: 'none', results: [], tokens: 0, latencyMs: latency() };
   }
@@ -355,9 +413,11 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
   const norm = normalizeTitle(title);
   const enableCache = settingBool('enable_cache');
   const enableFuzzy = settingBool('enable_fuzzy');
+  // 图片题的答案依赖具体图片，同题干不同图会互相污染，因此既不复用缓存也不入库
+  const useCache = enableCache && !hasImages;
 
   // 1) 精确命中
-  if (enableCache) {
+  if (useCache) {
     const rows = listByNorm(norm, effectiveType);
     const row = rows[0];
     if (row) {
@@ -386,7 +446,7 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
   }
 
   // 2) 模糊命中
-  if (enableCache && enableFuzzy) {
+  if (useCache && enableFuzzy) {
     const threshold = settingNumber('fuzzy_threshold');
     const candidates = fuzzyCandidates(effectiveType);
     const match = bestMatch(title, candidates, threshold);
@@ -421,7 +481,7 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
   }
 
   try {
-    const ai = await askLlm(effectiveType, title, options, configs);
+    const ai = await askLlm(effectiveType, aiTitle, aiOptions, configs, images);
     let resolved = toResolved(effectiveType, ai.parsed);
     const results = formatResults(title, effectiveType, resolved, { ai: true });
     if (!results.length) {
@@ -435,16 +495,18 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
         model: ai.model,
       };
     }
-    const questionId = upsertQuestion({
-      title,
-      type: effectiveType,
-      options,
-      answer: resolved.text,
-      letter: resolved.letter,
-      model: ai.model,
-      source: 'ai',
-      userId: input.userId,
-    });
+    const questionId = hasImages
+      ? undefined
+      : upsertQuestion({
+          title,
+          type: effectiveType,
+          options,
+          answer: resolved.text,
+          letter: resolved.letter,
+          model: ai.model,
+          source: 'ai',
+          userId: input.userId,
+        });
     return {
       code: 1,
       msg: 'ok',
@@ -454,6 +516,7 @@ export async function resolve(input: ResolveInput): Promise<ResolveOutput> {
       tokens: ai.tokens,
       latencyMs: latency(),
       model: ai.model,
+      ...(hasImages ? { images: images.length } : {}),
     };
   } catch (err) {
     return {
@@ -474,6 +537,9 @@ export async function resolveWithAiOnly(input: ResolveInput): Promise<ResolveOut
   const type0 = normalizeType(input.type);
   const options = splitOptions(input.options);
   const type: QuestionType = type0 === 'unknown' && options.length > 0 ? 'single' : type0;
+  const images = normalizeImages(input.images);
+  const aiTitle = String(input.suggestionTitle ?? '').trim() || title;
+  const aiOptions = input.suggestionOptions ? splitOptions(input.suggestionOptions) : options;
   if (!title) return { code: 0, msg: '题目为空', hit: 'none', results: [], tokens: 0, latencyMs: 0 };
   const configs = runtimeAiConfigs();
   if (!configs.length) return { code: 0, msg: '未配置 AI 提供商', hit: 'none', results: [], tokens: 0, latencyMs: 0 };
@@ -482,10 +548,11 @@ export async function resolveWithAiOnly(input: ResolveInput): Promise<ResolveOut
     const res = await callLlm({
       config,
       systemPrompt: systemPrompt(),
-      userPrompt: buildUserPrompt({ type, title, options }),
+      userPrompt: buildUserPrompt({ type, title: aiTitle, options: aiOptions, hasImages: images.length > 0 }),
+      images,
       jsonMode: true,
     });
-    const parsed = interpretLlmAnswer(type, res.raw, options);
+    const parsed = interpretLlmAnswer(type, res.raw, aiOptions);
     const resolved = toResolved(type, parsed);
     return {
       code: parsed.answer ? 1 : 0,
@@ -495,6 +562,7 @@ export async function resolveWithAiOnly(input: ResolveInput): Promise<ResolveOut
       tokens: res.tokens,
       latencyMs: Date.now() - started,
       model: res.model,
+      ...(images.length ? { images: images.length } : {}),
     };
   } catch (err) {
     return {

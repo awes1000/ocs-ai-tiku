@@ -17,7 +17,7 @@ import {
   normalizeJudgement,
   normalizeOption,
 } from '../src/services/similarity';
-import { interpretLlmAnswer } from '../src/services/resolver';
+import { interpretLlmAnswer, normalizeImages } from '../src/services/resolver';
 import { mapAnswerToOptions, similarity } from '../src/services/match';
 import { normalizeOption as nopt } from '../src/services/similarity';
 
@@ -35,6 +35,16 @@ check('lettersFromTexts 文本映射', lettersFromTexts(['苹果', '香蕉', '�
 check('isLetterAnswer 合法', isLetterAnswer('ABD'));
 check('isLetterAnswer 非法(重复)', !isLetterAnswer('AAB'));
 check('normalizeJudgement true→对', normalizeJudgement('true') === '对');
+
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+check('normalizeImages 保留 data URL', normalizeImages([PNG]).length === 1);
+check(
+  'normalizeImages 丢弃 undefined/非图片',
+  normalizeImages(['undefined', 'not-an-image', '', null]).length === 0,
+  JSON.stringify(normalizeImages(['undefined', 'not-an-image', '', null])),
+);
+check('normalizeImages 支持 JSON 字符串', normalizeImages(JSON.stringify([PNG])).length === 1);
+check('normalizeImages 非数组返回空', normalizeImages({ a: 1 }).length === 0);
 
 const single = interpretLlmAnswer('single', '{"answer":"B"}', ['甲', '乙', '丙']);
 check('LLM single 字母→文本', single.letter === 'B' && single.answer === '乙', JSON.stringify(single));
@@ -187,6 +197,14 @@ async function main(): Promise<void> {
       Array.isArray(wizardJson.data.answerer_wrapper) &&
       wizardJson.data.answerer_wrapper[0]?.type === 'GM_xmlhttpRequest',
     JSON.stringify(wizardJson).slice(0, 200),
+  );
+  const wizData = wizardJson.data?.answerer_wrapper?.[0]?.data ?? {};
+  check(
+    '接入向导声明图片题支持',
+    typeof wizData.images?.handler === 'string' &&
+      typeof wizData.suggestion_title?.handler === 'string' &&
+      typeof wizData.suggestion_options?.handler === 'string',
+    JSON.stringify(Object.keys(wizData)),
   );
 
   const questions = await fetch(`${base}/api/questions?page=1&page_size=5`, { headers: { cookie } });

@@ -1082,6 +1082,8 @@ async function renderWizard() {
         若 OCS 脚本与后端不在同一台机器的域名下，请把「服务地址」改成脚本能访问到的地址（局域网 IP、公网域名等）。
         使用 <code>GM_xmlhttpRequest</code> 可无视 CORS 与混合内容限制。
         生成的配置是 <b>JSON 数组</b>（OCS 题库配置只接受 <code>[{...}]</code>），整段粘贴即可。
+        已包含 <code>images</code> / <code>suggestion_title</code> / <code>suggestion_options</code>，
+        支持 OCS 的「图片题优化」（图片以多模态 part 发给模型）。
       </div>
       <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary" id="wz-gen">生成配置</button>
@@ -1159,6 +1161,7 @@ async function renderPlayground() {
       </div>
       <label class="field"><span>题目</span><input id="pg-title" placeholder="例如：1+1=?" /></label>
       <label class="field"><span>选项（每行一个，判断题/填空题留空）</span><textarea id="pg-options" class="code" rows="4" placeholder="A.1&#10;B.2&#10;C.3"></textarea></label>
+      <label class="field"><span>图片（可选，每行一个 http(s) URL 或 data:image/...;base64，用于测试图片题）</span><textarea id="pg-images" class="code" rows="2" placeholder="https://example.com/q1.png"></textarea></label>
       <div style="display:flex;gap:10px">
         <button class="btn primary" id="pg-send">发送请求</button>
         <button class="btn" id="pg-clear">清空结果</button>
@@ -1189,12 +1192,16 @@ async function renderPlayground() {
           title,
           type: $('#pg-type').value,
           options: $('#pg-options').value,
+          images: $('#pg-images')
+            .value.split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
           use_cache: $('#pg-mode').value === 'cache',
         },
       });
       const elapsed = Date.now() - started;
       const HIT_LABEL = { cache: '题库缓存', fuzzy: '模糊匹配', ai: 'AI 生成', none: '未命中' };
-      $('#pg-meta').textContent = `${out.latencyMs}ms · 命中：${HIT_LABEL[out.hit] || out.hit} · ${out.tokens || 0} tokens${out.model ? ' · ' + out.model : ''}`;
+      $('#pg-meta').textContent = `${out.latencyMs}ms · 命中：${HIT_LABEL[out.hit] || out.hit} · ${out.tokens || 0} tokens${out.model ? ' · ' + out.model : ''}${out.images ? ' · 图片 ' + out.images + ' 张' : ''}`;
       $('#pg-result').innerHTML = `
         ${
           out.code === 1
