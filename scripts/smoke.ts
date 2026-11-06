@@ -181,7 +181,13 @@ async function main(): Promise<void> {
 
   const wizard = await fetch(`${base}/api/wizard`, { headers: { cookie } });
   const wizardJson: any = await wizard.json();
-  check('接入向导生成 AnswererWrapper', wizardJson.code === 1 && wizardJson.data.answerer_wrapper.type === 'GM_xmlhttpRequest', JSON.stringify(wizardJson).slice(0, 200));
+  check(
+    '接入向导生成 AnswererWrapper（数组）',
+    wizardJson.code === 1 &&
+      Array.isArray(wizardJson.data.answerer_wrapper) &&
+      wizardJson.data.answerer_wrapper[0]?.type === 'GM_xmlhttpRequest',
+    JSON.stringify(wizardJson).slice(0, 200),
+  );
 
   const questions = await fetch(`${base}/api/questions?page=1&page_size=5`, { headers: { cookie } });
   const qJson: any = await questions.json();

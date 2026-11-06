@@ -1081,6 +1081,7 @@ async function renderWizard() {
       <div class="alert info small">
         若 OCS 脚本与后端不在同一台机器的域名下，请把「服务地址」改成脚本能访问到的地址（局域网 IP、公网域名等）。
         使用 <code>GM_xmlhttpRequest</code> 可无视 CORS 与混合内容限制。
+        生成的配置是 <b>JSON 数组</b>（OCS 题库配置只接受 <code>[{...}]</code>），整段粘贴即可。
       </div>
       <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary" id="wz-gen">生成配置</button>
@@ -1089,13 +1090,13 @@ async function renderWizard() {
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>AnswererWrapper 配置</h3><span class="muted small">粘贴到 OCS「题库配置」中</span></div>
+      <div class="card-head"><h3>AnswererWrapper 配置</h3><span class="muted small">整段（含外层 [ ]）粘贴到 OCS「题库配置」中</span></div>
       <div class="code-block" id="wz-out">点击「生成配置」</div>
     </div>
     <div class="card">
       <div class="card-head"><h3>使用步骤</h3></div>
       <ol style="line-height:2;font-size:13px;padding-left:20px;margin:0">
-        <li>打开 OCS 网课助手 →「通用」→「题库配置」，把上面的 JSON 粘贴进去保存。</li>
+        <li>打开 OCS 网课助手 →「通用」→「题库配置」，把上面的 JSON <b>整段</b>粘贴进去保存（必须是数组 <code>[{...}]</code>，否则会提示「解析失败：Spread syntax requires ...iterable[Symbol.iterator] to be a function」）。</li>
         <li>若使用全域名通用版脚本，无需修改 <code>@connect</code>；否则需要在脚本头部加上：
           <div class="code-block" id="wz-connect" style="margin-top:6px">// @connect *</div>
         </li>

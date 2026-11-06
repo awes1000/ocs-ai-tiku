@@ -105,25 +105,30 @@ npm start
 
 ## 二、OCS 接入
 
-**接入向导**页会按当前账号和访问地址自动生成，形如：
+**接入向导**页会按当前账号和访问地址自动生成。注意 OCS 的「题库配置」**必须是 JSON 数组**，所以生成结果是 `[{...}]`：
 
 ```json
-{
-  "name": "OCS AI 题库（admin）",
-  "type": "GM_xmlhttpRequest",
-  "method": "post",
-  "url": "http://127.0.0.1:8060/search",
-  "contentType": "json",
-  "headers": { "Content-Type": "application/json" },
-  "data": {
-    "title": "${title}",
-    "type": "${type}",
-    "options": "${options}",
-    "token": "你的搜题Token"
-  },
-  "handler": "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg) || '未找到答案', undefined]; }"
-}
+[
+  {
+    "name": "OCS AI 题库（admin）",
+    "type": "GM_xmlhttpRequest",
+    "method": "post",
+    "url": "http://127.0.0.1:8060/search",
+    "contentType": "json",
+    "headers": { "Content-Type": "application/json" },
+    "data": {
+      "title": "${title}",
+      "type": "${type}",
+      "options": "${options}",
+      "token": "你的搜题Token"
+    },
+    "handler": "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg) || '未找到答案', undefined]; }"
+  }
+]
 ```
+
+> 一定要保留外层的 `[ ]`。OCS 解析粘贴内容是 `awsResult.push(...JSON.parse(文本))`，
+> 如果粘单个 `{...}` 对象，会报 `Spread syntax requires ...iterable[Symbol.iterator] to be a function`（「解析失败」弹窗）。
 
 要点：
 

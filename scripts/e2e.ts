@@ -199,7 +199,14 @@ async function main() {
 
   /* ---- 接入向导 ---- */
   const wz = await call(`/api/wizard?token=${encodeURIComponent(newToken)}&base_url=${encodeURIComponent(BASE)}`);
-  const wrapper = wz.json.data.answerer_wrapper;
+  const wrapperList = wz.json.data.answerer_wrapper;
+  check(
+    '向导生成 wrapper 为数组（OCS 题库配置只接受 [{...}]）',
+    Array.isArray(wrapperList) && wrapperList.length === 1,
+    JSON.stringify(wrapperList).slice(0, 200),
+  );
+  check('向导输出 JSON 可直接粘贴到 OCS', Array.isArray(JSON.parse(wz.json.data.json)));
+  const wrapper = wrapperList[0] ?? {};
   check('向导生成 wrapper', wrapper.type === 'GM_xmlhttpRequest' && wrapper.url === `${BASE}/search`, JSON.stringify(wrapper).slice(0, 200));
   check('向导 data 使用占位符', wrapper.data.title === '${title}' && wrapper.data.token === newToken);
   check('向导 handler 可用', (() => {

@@ -789,25 +789,51 @@ router.post('/debug/solve', requireAuth, async (req, res) => {
 
 /* ============================ 接入向导 ============================ */
 
-export function buildAnswererWrapper(baseUrl: string, token: string, opts?: { name?: string }) {
+/** OCS 题库配置单项（AnswererWrapper） */
+export interface AnswererWrapper {
+  name: string;
+  type: 'GM_xmlhttpRequest';
+  method: 'post';
+  url: string;
+  contentType: 'json';
+  headers: Record<string, string>;
+  data: Record<string, string>;
+  handler: string;
+}
+
+/**
+ * 生成 OCS 题库配置。
+ *
+ * 必须返回 **数组**：OCS 解析「题库配置」文本框时走的是
+ * `AnswerWrapperParser.from(content)` + `awsResult.push(...parsed)`，
+ * 粘贴单个对象会让 spread 展开非可迭代值，报
+ * "Spread syntax requires ...iterable[Symbol.iterator] to be a function"。
+ */
+export function buildAnswererWrapper(
+  baseUrl: string,
+  token: string,
+  opts?: { name?: string },
+): AnswererWrapper[] {
   const api = `${baseUrl.replace(/\/+$/, '')}/search`;
   const name = opts?.name || 'OCS AI 题库';
-  return {
-    name,
-    type: 'GM_xmlhttpRequest',
-    method: 'post',
-    url: api,
-    contentType: 'json',
-    headers: { 'Content-Type': 'application/json' },
-    data: {
-      title: '${title}',
-      type: '${type}',
-      options: '${options}',
-      token,
+  return [
+    {
+      name,
+      type: 'GM_xmlhttpRequest',
+      method: 'post',
+      url: api,
+      contentType: 'json',
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        title: '${title}',
+        type: '${type}',
+        options: '${options}',
+        token,
+      },
+      handler:
+        "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg && res.code !== 1 ? res.msg : '未找到答案'), undefined]; }",
     },
-    handler:
-      "return (res) => { try { if (res && typeof res === 'string') res = JSON.parse(res); } catch (e) { return [String(res), undefined]; } if (res && res.code === 1 && res.data && Array.isArray(res.data.results) && res.data.results.length) return res.data.results; return [(res && res.msg && res.code !== 1 ? res.msg : '未找到答案'), undefined]; }",
-  };
+  ];
 }
 
 router.get('/wizard', requireAuth, (req, res) => {
