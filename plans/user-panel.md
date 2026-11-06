@@ -70,7 +70,7 @@
 - [x] 1. 修改 `src/routes/admin.ts`：为管理接口补齐 `requireAdmin`，新增 `POST /api/auth/token`，在 `/api/auth/me` 与 `/api/wizard` 返回 `ai_configured`，对非管理员锁定 `/api/wizard` 的 `base_url` 与 `token`，并在 `POST /api/users` 和 `PATCH /api/users/:id` 支持 `must_change_password`。
 - [x] 2. 修改 `public/index.html` 与 `public/app.js`：收紧普通用户可见导航，实现普通用户专属接入向导面板（锁定服务地址、展示 API 状态、自助重置 Token 与修改密码），并在管理员「用户管理」中支持勾选「首次登录强制修改密码」与一键复制分发信息。
 - [x] 3. 更新 `scripts/ui-check.ts`、`scripts/e2e.ts`、`scripts/ui-browser.ts`：同步路由清单，覆盖普通用户 403 边界、自助重置 Token、锁定 `base_url` 及普通用户浏览器 UI 渲染测试。
-- [ ] 4. 运行 `npm run typecheck` 与 `npm run verify` 完成全量验证并按约定提交 git。
+- [x] 4. 运行 `npm run typecheck` 与 `npm run verify` 完成全量验证并按约定提交 git。
 
 ## Verification
 
