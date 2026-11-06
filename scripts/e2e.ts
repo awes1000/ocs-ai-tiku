@@ -153,6 +153,17 @@ async function main() {
   await call(`/api/users/${uid}`, { method: 'PATCH', body: { status: 'active' } });
 
   /* ---- 搜题（真实接口） ---- */
+  // OCS 题库卡片的「连接检测」：HEAD /search?t=... 不带 token，必须能探活成功
+  const probeHead = await fetch(`${BASE}/search?t=${Date.now()}`, { method: 'HEAD' });
+  check('探活 HEAD /search 不鉴权', probeHead.status >= 200 && probeHead.status < 300, String(probeHead.status));
+  const probeGet = await fetch(`${BASE}/search?t=${Date.now()}`);
+  const probeGetJson: any = await probeGet.json().catch(() => ({}));
+  check('探活 GET /search 返回 200', probeGet.status === 200 && probeGetJson.data?.probe === true, JSON.stringify(probeGetJson).slice(0, 120));
+  const probeTitle = await fetch(`${BASE}/search?title=${encodeURIComponent('无 token 搜题')}`);
+  check('带题目的搜题仍需 token（401）', probeTitle.status === 401, String(probeTitle.status));
+  const probePost = await call('/search', { method: 'POST', body: {} });
+  check('POST 搜题无 token 仍 401', probePost.status === 401, String(probePost.status));
+
   const s1 = await call(`/search?token=${encodeURIComponent(newToken)}&title=${encodeURIComponent('1+1=?')}&type=single&options=${encodeURIComponent('A.1\nB.2\nC.3')}`);
   check('搜题 AI 命中', s1.json.code === 1 && s1.json.data.hit === 'ai', JSON.stringify(s1.json).slice(0, 250));
   const s2 = await call(`/search?token=${encodeURIComponent(newToken)}&title=${encodeURIComponent('1+1=?')}&type=single&options=${encodeURIComponent('A.1\nB.2\nC.3')}`);

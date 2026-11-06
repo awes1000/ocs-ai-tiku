@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { apiAuth } from '../middleware/auth';
+import { apiAuth, extractApiToken } from '../middleware/auth';
 import { logRequest, normalizeImages, resolve, resolveWithAiOnly, type ResolveOutput } from '../services/resolver';
 import { errMsg } from '../utils';
 import { settingNumber } from '../config';
@@ -131,6 +131,31 @@ async function handle(req: any, res: any, aiOnly: boolean): Promise<void> {
     },
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* OCS 题库卡片的「连接检测」探活                                        */
+/*   OCS 发的是 HEAD /search?t=<时间戳>（HEAD 回 405/501 时退回 GET），       */
+/*   且**不带** token；走鉴权就会回 401，面板上直接显示「连接失败（401）」。  */
+/*   这里只对「未带 token 且未带题目」的探活请求回 200，真正的搜题请求         */
+/*   （带 title）仍然必须带有效 token。                                     */
+/* ------------------------------------------------------------------ */
+function isProbe(req: any): boolean {
+  if (extractApiToken(req)) return false;
+  const title = req.method === 'GET' ? req.query?.title : req.body?.title;
+  return !String(Array.isArray(title) ? title[0] : (title ?? '')).trim();
+}
+
+router.head('/search', (_req, res) => {
+  // 探活：不鉴权、不记日志、不消耗限流额度；no-store 避免 CDN（Cloudflare 等）缓存
+  res.setHeader('cache-control', 'no-store');
+  res.status(204).end();
+});
+
+router.get('/search', (req, res, next) => {
+  if (!isProbe(req)) return next();
+  res.setHeader('cache-control', 'no-store');
+  res.json({ code: 1, msg: 'ok', data: { service: 'ocs-tiku', probe: true } });
+});
 
 router.get('/search', apiAuth, (req, res) => void handle(req, res, false).catch((e) => res.status(500).json({ code: 0, msg: errMsg(e) })));
 router.post('/search', apiAuth, (req, res) => void handle(req, res, false).catch((e) => res.status(500).json({ code: 0, msg: errMsg(e) })));

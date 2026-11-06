@@ -105,6 +105,16 @@ npm start
 - `POST /search/ai` — 同 `/search` 但强制走 AI（不入缓存），WebGUI 测试台用
 - `GET /health` — 健康检查
 
+### 探活（OCS 面板的「连接检测」）
+
+OCS 题库卡片上的状态徽标不是真的搜题，而是 `HEAD /search?t=<时间戳>`（HEAD 返回 405/501 时退回 GET），**不带 token**。
+后端对这类「没带 token 且没带题目」的探活请求直接回 `204` / `200`（`{code:1,data:{probe:true}}`，带 `cache-control: no-store`），
+所以面板会显示「连接成功」，不会出现「连接失败（401）」。
+
+> 带 `title` 的请求（真正搜题）仍然必须带有效 token，无 token 一律 401。
+> 如果面板探活成功、但搜题日志里都是 401，那是 token 不对（例如在 WebGUI「重置 Token」后还在用旧配置）——
+> 重新在「接入向导」生成配置即可。
+
 ### 图片题 / 公式题（OCS「图片题优化」）
 
 OCS 开启「图片题优化」后，会把题干/选项里的图片转成 base64，并把题干中的图片地址替换成
@@ -169,6 +179,13 @@ OCS 开启「图片题优化」后，会把题干/选项里的图片转成 base6
    OCS 开启「图片题优化」时会把图片 base64 与 `[图片N]` 占位的题干一并提交；
    未开启时这些 handler 分别回退为 `env.title` / `env.options` / `[]`，不会把 `undefined` 当字符串发出去。
    只要配置里有这三个字段，OCS 就不会再提示「当前题库配置暂不支持图片、公式等题目处理」。
+6. **套了 Cloudflare / Nginx 反代时**：
+   - 探活是 `HEAD /search`，CDN 需允许 HEAD（Cloudflare 默认允许）；后端已给探活响应加 `no-store`，不会被缓存；
+   - 真正搜题都是 `POST`，默认也不会被 CDN 缓存；
+   - 若开了 **Cloudflare Access / 托管 Challenge / WAF 拦截**，`GM_xmlhttpRequest` 会拿到 `401/403`
+     （页面上报的 401 也可能来自它们，而不是后端），需要在 CF 侧对该域名放行（Access 跳过策略 / 关闭 challenge），
+     而不是改后端。
+   - 反向代理不要改写或缓存 `/search`；如果只代理了页面却漏了 `/search` 路径，也会得到非后端返回的 4xx。
 
 ---
 
